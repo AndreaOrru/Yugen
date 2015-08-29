@@ -1,239 +1,376 @@
 #!/usr/bin/env python3
-"""Subtly profound text editor."""
-
+"""Yugen, the subtly profound text editor."""
 
 import curses
 from curses import ascii
-from curses.ascii import ctrl
+from curses.ascii import isctrl, isprint, unctrl
+from abc import ABC, abstractmethod
 
 
-class Screen:
-    """Abstraction of the whole screen."""
-    def __init__(self, stdscr):
-        self.stdscr = stdscr
-        self.init_curses()
-        self.init_border()
+class UIWindow(ABC):
+    def __init__(self, ui, line, column, n_lines, n_columns):
+        self._ui = ui
+        self._line = line
+        self._column = column
+        self._n_lines = n_lines
+        self._n_columns = n_columns
+        self._cursor_line = 0
+        self._cursor_column = 0
 
-        self.cmdline = CommandWindow(self, 1, curses.COLS, curses.LINES-1, 0)
-        self.main = TextWindow(self, curses.LINES-2, curses.COLS, 0, 0)
+    @abstractmethod
+    def cursor_set(self, line, column):
+        return
 
-        self.main.loop()
+    @abstractmethod
+    def line_update(self, content, line):
+        return
 
-    @staticmethod
-    def init_curses():
-        """Initialize curses modes and colors."""
+    @abstractmethod
+    def line_insert(self, content, line):
+        return
+
+    @abstractmethod
+    def key_get(self):
+        return
+
+
+class UI(ABC):
+    @abstractmethod
+    def max_lines(self):
+        return
+
+    @abstractmethod
+    def max_columns(self):
+        return
+
+    @abstractmethod
+    def screen_update(self):
+        return
+
+    @abstractmethod
+    def window_create(self, line, column, n_lines, n_columns):
+        return
+
+    @abstractmethod
+    def key_get(self, ui_window_active):
+        return
+
+
+class Key:
+    keys = {k[4:]: eval('curses.'+k) for k in dir(curses) if k[:4] == 'KEY_'}
+    keys['DEL'] = ascii.DEL
+
+    def __init__(self, key, ctrl=None, meta=None):
+        # key is a string:
+        try:
+            self.ctrl = 'C-' in key
+            self.meta = 'M-' in key
+            key = key.upper() if ('S-' in key) else key
+            key = key.split('-')[-1]
+            self.key = Key.keys[key] if (key in Key.keys) else ord(key)
+        # key is an integer:
+        except TypeError:
+            self.key = key
+            self.ctrl = ctrl
+            self.meta = meta
+
+    def is_printable(self):
+        return not (self.meta or self.ctrl) and isprint(chr(self.key))
+
+    def char(self):
+        return chr(self.key)
+
+    def __eq__(self, o):
+        return self.meta == o.meta and self.ctrl == o.ctrl and self.key == o.key
+
+    def __hash__(self):
+        return self.key << 2 | self.ctrl << 1 | self.meta
+
+
+class Buffer:
+    def __init__(self, window=None, content=''):
+        self._windows = {window} if window else set()
+        self.content = content
+
+    @property
+    def content(self):
+        return '\n'.join(self._lines)
+
+    @content.setter
+    def content(self, content):
+        self._lines = content.split('\n')
+        self.windows_update()
+
+    @property
+    def lines(self):
+        return self._lines
+
+    @property
+    def windows(self):
+        return self._windows
+
+    @property
+    def end(self):
+        return len(self._lines) - 1, len(self._lines[-1])
+
+    def char_before(self, line, column):
+        if column > 0:
+            return line, column - 1
+        elif line > 0:
+            return line - 1, len(self._lines[line-1])
+        return 0, 0
+
+    def char_after(self, line, column):
+        if column < len(self._lines[line]):
+            return line, column + 1
+        elif line+1 < len(self._lines):
+            return line + 1, 0
+        return line, column
+
+    def char_insert(self, char, line, column):
+        self._lines[line] = self._lines[line][:column] + char + self._lines[line][column:]
+        self._windows_line_update(self._lines[line], line)
+
+    def char_delete(self, line, column):
+        self._lines[line] = self._lines[line][:column] + self._lines[line][column+1:]
+        self._windows_line_update(self._lines[line], line)
+
+    def line_break(self, line, column):
+        self._lines[line: line+1] = [self._lines[line][:column], self._lines[line][column:]]
+        self._windows_line_update(self._lines[line], line)
+        self._windows_line_insert(self._lines[line+1], line+1)
+
+    def window_link(self, window):
+        self._windows.add(window)
+        self.window_update(window)
+
+    def window_unlink(self, window):
+        self._windows.discard(window)
+
+    def window_update(self, window):
+        for line, content in enumerate(self._lines):
+            window._line_update(content, line)
+            window.cursor_begin_buffer()
+
+    def windows_update(self):
+        for window in self._windows:
+            self.window_update(window)
+
+    def _windows_line_update(self, content, line):
+        for window in self._windows:
+            window._line_update(content, line)
+
+    def _windows_line_insert(self, content, line):
+        for window in self._windows:
+            window._line_insert(content, line)
+
+
+class Window:
+    def __init__(self, ui, line, column, n_lines, n_columns, buffer=None):
+        self._ui = ui
+        self._ui_window = ui.window_create(line, column, n_lines, n_columns)
+        self.buffer = buffer if buffer else Buffer(self)  # Call the setter.
+
+        self.key_bindings = {
+            Key('LEFT'):  self.cursor_back,
+            Key('RIGHT'): self.cursor_forward,
+            Key('C-j'):   self.line_break,
+            Key('M-j'):   self.cursor_back,
+            Key('M-l'):   self.cursor_forward,
+            Key('DEL'):   self.char_delete,
+        }
+
+    @property
+    def buffer(self):
+        return self._buffer
+
+    @buffer.setter
+    def buffer(self, buffer):
+        try:
+            self._buffer = buffer
+            self._buffer.window_link(self)
+        except AttributeError:
+            self._buffer = Buffer(self, buffer)
+
+    @property
+    def cursor(self):
+        return self._ui_window._cursor_line, self._ui_window._cursor_column
+
+    def cursor_set(self, line, column):
+        self._ui_window.cursor_set(line, column)
+
+    def cursor_back(self):
+        return self.cursor_set(*self._buffer.char_before(*self.cursor))
+
+    def cursor_forward(self):
+        return self.cursor_set(*self._buffer.char_after(*self.cursor))
+
+    def cursor_begin_buffer(self):
+        return self.cursor_set(0, 0)
+
+    def cursor_end_buffer(self):
+        return self.cursor_set(*self._buffer.end)
+
+    def char_insert(self, char, line=None, column=None):
+        line, column = (line, column) if (line, column) != (None, None) else self.cursor
+        self._buffer.char_insert(char, line, column)
+        self.cursor_set(*self._buffer.char_after(line, column))
+
+    def char_delete(self, line=None, column=None):
+        line, column = (line, column) if (line, column) != (None, None) else self.cursor
+        self._buffer.char_delete(*self._buffer.char_before(line, column))
+        self.cursor_set(*self._buffer.char_before(line, column))
+
+    def line_break(self, line=None, column=None):
+        line, column = (line, column) if (line, column) != (None, None) else self.cursor
+        self._buffer.line_break(line, column)
+        self.cursor_set(*self._buffer.char_after(line, column))
+
+    def _line_update(self, content, line):
+        self._ui_window.line_update(content, line)
+
+    def _line_insert(self, content, line):
+        self._ui_window.line_insert(content, line)
+
+    def _key_handle(self, key):
+        if key.is_printable():
+            self.char_insert(key.char())
+        elif key in self.key_bindings:
+            self.key_bindings[key]()
+            return True
+        return False
+
+
+class CommandWindow(Window):
+    def __init__(self, ui):
+        super(CommandWindow, self).__init__(ui, ui.max_lines() - 2, 0, 2, ui.max_columns())
+
+        self.key_bindings[Key('C-j')] = self.evaluate
+
+    def evaluate(self):
+        try:
+            try:
+                self._buffer.content = str(eval(self._buffer.content))
+            except SyntaxError:
+                exec(self._buffer.content)
+                self._buffer.content = ''
+        except Exception as exception:
+            self._buffer.content = str(exception)
+
+        self.cursor_end_buffer()
+
+
+class Editor:
+    def __init__(self, ui):
+        self._ui = ui
+        self._command_window = CommandWindow(ui)
+        self._windows = list()
+        self._window_welcome()
+        self._window_active = self._windows[0]
+
+        self.key_bindings = {
+            Key('M-q'): quit,
+            Key('M-x'): self.command_window_toggle,
+        }
+
+    def run(self):
+        while True:
+            self._ui.screen_update()
+            self._key_handle(self._ui.key_get(self._window_active._ui_window))
+
+    def command_window_toggle(self):
+        if self._window_active is self._command_window:
+            self._window_active = self._windows[0]
+        else:
+            self._window_active = self._command_window
+        self._window_active.cursor_set(*self._window_active.cursor)
+
+    def window_create(self, line, column, n_lines, n_columns, buffer):
+        window = Window(self._ui, line, column, n_lines, n_columns, buffer)
+        self._window_link(window)
+        return window
+
+    def _window_link(self, window):
+        if window not in self._windows:
+            self._windows.append(window)
+
+    def _window_unlink(self, window):
+        try:
+            self._windows.remove(window)
+        except ValueError:
+            pass
+
+    def _window_welcome(self):
+        window = self.window_create(0, 0, self._ui.max_lines() - 2, self._ui.max_columns(),
+                                    'Welcome to Yugen, the subtly profound text editor.')
+        window.cursor_end_buffer()
+
+    def _key_handle(self, key):
+        if not self._window_active._key_handle(key):
+            if key in self.key_bindings:
+                self.key_bindings[key]()
+
+
+class CursesWindow(UIWindow):
+    def __init__(self, ui, line, column, n_lines, n_columns):
+        super(CursesWindow, self).__init__(ui, line, column, n_lines, n_columns)
+        self._window = self._ui._screen.subpad(n_lines, n_columns, line, column)
+        self._window.keypad(True)
+
+    def key_get(self):
+        key1 = self._window.getch()
+        key2 = self._window.getch() if (key1 == ascii.ESC) else None
+
+        meta = (key1 == ascii.ESC)
+        key = (key2 if meta else key1)
+        ctrl = isctrl(key)
+        key = ord(unctrl(key)[-1].lower()) if (key < 0x20) else key
+
+        return Key(key, ctrl, meta)
+
+    def cursor_set(self, line, column, update_cursor=True):
+        self._window.move(line, column)
+        if update_cursor:
+            self._cursor_line, self._cursor_column = line, column
+            self._window.noutrefresh()
+
+    def line_update(self, content, line):
+        self._window.addstr(line, 0, content)
+        self._window.clrtoeol()
+        self.cursor_set(self._cursor_line, self._cursor_column, False)
+        self._window.noutrefresh()
+
+    def line_insert(self, content, line):
+        self.cursor_set(line, 0, False)
+        self._window.insertln()
+        self.line_update(content, line)
+
+
+class Curses(UI):
+    def __init__(self, screen):
+        self._screen = screen
         curses.raw()
         curses.init_pair(1, curses.COLOR_RED, curses.COLOR_BLACK)
         curses.init_pair(2, curses.COLOR_GREEN, curses.COLOR_BLACK)
 
-    def init_border(self):
-        """Draw the command window border"""
-        self.stdscr.hline(curses.LINES - 2, 0, curses.ACS_HLINE, curses.COLS)
-        self.stdscr.refresh()
+    def max_lines(self):
+        return curses.LINES
 
+    def max_columns(self):
+        return curses.COLS
 
-class Window:
-    """Generic text editing window."""
-    def __init__(self, screen, height, width, y, x, borders=(0, 0), content=''):
-        self.screen = screen
-        self.window = self.screen.stdscr.subwin(height, width, y, x)
-        self.window.keypad(True)
-        self.borders = borders
+    def screen_update(self):
+        curses.doupdate()
 
-        self.content = content.split('\n')
-        self.reload()
+    def window_create(self, line, column, n_lines, n_columns):
+        return CursesWindow(self, line, column, n_lines, n_columns)
 
-        self.reading = True
-        self.scope = globals()
-        self.scope.update({n: eval('s.'+n, {'s': self}) for n in dir(self)})
-
-    def coords(self):
-        """Return positions in the window y, x and positions in the buffer row, col."""
-        y, x = self.window.getyx()
-        row, col = (y - self.borders[0], x - self.borders[1])
-        return y, x, row, col
-
-    def reload(self):
-        """Reload the buffer into the window."""
-        self.window.clear()
-        for y, line in enumerate(self.content):
-            self.window.insstr(self.borders[0] + y, self.borders[1], line)
-        self.window.move(*self.borders)
-
-    def write(self, c):
-        """Insert a character where the cursor is."""
-        y, x, row, col = self.coords()
-
-        # Put the character in the current cursor position:
-        self.window.addch(y, x, c)
-        # If there were other character ahead in the same line:
-        if col < len(self.content[row]):
-            # Reinsert the overwritten one and shift the others forward:
-            self.window.insch(self.content[row][col])
-        # Update the buffer by adding the character in the middle:
-        self.content[row] = self.content[row][:col] + chr(c) + self.content[row][col:]
-
-    def write_newline(self):
-        """Insert a newline where the cursor is."""
-        y, x, row, col = self.coords()
-
-        self.window.addch(y, x, ascii.NL)  # Newline (overwrite next characters).
-        self.window.insertln()             # Create a blank line below, push back everything.
-        # Write all the characters that were left in the first line and we overwrote:
-        self.window.insstr(y+1, self.borders[1], self.content[row][col:])
-        # Update the buffer (basically split the line in two):
-        self.content[row: row+1] = [self.content[row][:col], self.content[row][col:]]
-
-    def move_horizontal(self, d):
-        """Move the cursor left (d = -1) or right (d = 1), adjusting the vertical position if needed."""
-        y, x, row, col = self.coords()
-
-        # If there are still characters where to go horizontally:
-        if (d == -1 and col > 0) or (d == 1 and col < len(self.content[row])):
-            self.window.move(y, x + d)
-        # Otherwise we have to move vertically, if possible:
-        elif (d == -1 and row > 0) or (d == 1 and row+1 < len(self.content)):
-            # Last character horizontally if moving left, first one if moving right:
-            self.window.move(y + d, self.borders[1] + (0 if d == 1 else len(self.content[row + d])))
-
-    def delete(self):
-        """Delete the character immediately before the cursor."""
-        y, x, row, col = self.coords()
-
-        # If there are characters to delete horizontally:
-        if col > 0:
-            self.move_horizontal(-1)  # Move left.
-            self.window.delch()       # Delete the char.
-            self.content[row] = self.content[row][:col-1] + self.content[row][col:]
-        # Else remove vertically, if possibile:
-        elif row > 0:
-            self.window.deleteln()    # Delete the current line.
-            self.move_horizontal(-1)  # Move up, end of previous line.
-            # Write the line we deleted at the end of the previous one:
-            self.window.insstr(y-1, len(self.content[row-1]), self.content[row])
-            self.content[row-1: row+1] = [self.content[row-1] + self.content[row]]
-
-    def switch_command(self, k, c):
-        """Choose the action to perform based on the pressed key.
-           Override to extend key-bindings."""
-        if ascii.isprint(k):          # Printable character.
-            self.write(k)
-        elif k == ascii.NL:           # Newline.
-            self.write_newline()
-        elif k == ascii.DEL:          # Backspace.
-            self.delete()
-
-        elif k == curses.KEY_LEFT:    # One character back.
-            self.move_horizontal(-1)
-        elif k == curses.KEY_RIGHT:   # One character forward.
-            self.move_horizontal(1)
-
-        # ALT group:
-        elif k == ascii.ESC:
-            if c == ord('q'):             # ALT-q -> Quit.
-                quit()
-            elif c == ord('j'):           # ALT-j -> One character back.
-                self.move_horizontal(-1)
-            elif c == ord('l'):           # ALT-l -> One character forward.
-                self.move_horizontal(1)
-
-    def loop(self):
-        """Start the window's interaction loop."""
-        while self.reading:
-            self.window.refresh()
-
-            k = self.window.getch()
-            c = self.window.getch() if (k == ascii.ESC) else None
-
-            self.switch_command(k, c)
-
-
-class TextWindow(Window):
-    """Text editing window, for savable buffers."""
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.cmdline = self.screen.cmdline
-
-    def save_file(self):
-        """Prompt in minibuffer for the name of the file where to save."""
-        def save_file_callback(file_name):
-            open(file_name, 'w').write('\n'.join(self.content))
-            return file_name
-        self.cmdline.prompt('Save as: ', "Saved as '{}'.", save_file_callback)
-
-    def evaluate(self):
-        """Prompt in minibuffer for a Python expression to evaluate."""
-        self.cmdline.prompt('Eval: ', '{}', lambda x: eval(x, self.scope))
-
-    def execute(self):
-        """Prompt in minibuffer for Python code to execute."""
-        self.cmdline.prompt('Exec: ', 'OK.', lambda x: exec(x, self.scope))
-
-    def switch_command(self, k, c):
-        super().switch_command(k, c)
-
-        # CTRL group:
-        if k == ctrl(ord('c')):    # CTRL-c -> Clear command line.
-            self.cmdline.clear()
-        elif k == ctrl(ord('s')):  # CTRL-s -> Save file as...
-            self.save_file()
-
-        # ALT group:
-        elif k == ascii.ESC:
-            if c == ord('e'):      # ALT-e -> Evaluate expression...
-                self.evaluate()
-            elif c == ord('x'):    # ALT-x -> Execute code...
-                self.execute()
-
-
-class CommandWindow(Window):
-    """Small text window to insert commands."""
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.timer = None
-
-    def write_newline(self):
-        """Newlines in CommandWindow launch the command."""
-        self.reading = False
-
-    def clear(self):
-        """Clear the command line."""
-        self.window.deleteln()
-        self.window.refresh()
-
-    def prompt(self, question, answer, action):
-        """Get user input by showing a question, then perform
-           an action for the caller and show the result as a
-           formatted input inside answer."""
-        # Show the question, arrange the borders and read the input:
-        self.window.addstr(0, 0, question, curses.A_BOLD)
-        self.borders = (0, len(question))
-
-        self.reading = True
-        self.loop()
-
-        # If any input was read:
-        if self.content[0]:
-            self.window.deleteln()
-            # Show the resulting message:
-            try:
-                self.window.addstr(0, 0, answer.format(action(self.content[0])), curses.color_pair(2))
-            except Exception as err:
-                self.window.addstr(0, 0, str(err), curses.color_pair(1))
-
-            self.window.refresh()
-            self.content = ['']
-        else:
-            self.clear()
-
-    def switch_command(self, k, c):
-        super().switch_command(k, c)
-
-        # CTRL group:
-        if k == ctrl(ord('c')):   # CTRL-c -> Quit insertion.
-            self.content = ['']
-            self.reading = False
+    def key_get(self, ui_window_active):
+        return ui_window_active.key_get()
 
 
 if __name__ == '__main__':
-    curses.wrapper(Screen)
+    def main(stdscr):
+        editor = Editor(Curses(stdscr))
+        editor.run()
+    curses.wrapper(main)
