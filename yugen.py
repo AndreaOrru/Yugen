@@ -19,17 +19,21 @@ class UIWindow(ABC):
         self._cursor_column = 0
 
     @abstractmethod
+    def background_set(self, color):
+        return
+
+    @abstractmethod
     def cursor_set(self, line, column):
         """Set the position of the cursor."""
         return
 
     @abstractmethod
-    def line_update(self, line, content):
+    def line_update(self, line, content, attributes):
         """Show the given content in the specified line."""
         return
 
     @abstractmethod
-    def line_insert(self, line, content):
+    def line_insert(self, line, content, attributes):
         """Insert a new line with the given content under the given line."""
         return
 
@@ -112,7 +116,7 @@ class Buffer:
     """Class representing a text buffer."""
     def __init__(self, content='', window=None):
         self._windows = {window} if window else set()
-        self.content = content
+        self._lines = content.split('\n')
 
     @property
     def content(self):
@@ -270,6 +274,9 @@ class Window:
         """Move the cursor to the end of the buffer."""
         self.cursor_set(*self._buffer.end)
 
+    def decorate(self, content):
+        return (0,) * len(content)
+
     def char_insert(self, char, line=None, column=None):
         """Insert a character at the given position."""
         line, column = (line, column) if (line, column) != (None, None) else self.cursor
@@ -293,11 +300,11 @@ class Window:
 
     def _line_update(self, line, content):
         """Show the given content in the specified line."""
-        self._ui_window.line_update(line, content)
+        self._ui_window.line_update(line, content, self.decorate(content))
 
     def _line_insert(self, line, content):
         """Insert a new line with the given content under the given line."""
-        self._ui_window.line_insert(line, content)
+        self._ui_window.line_insert(line, content, self.decorate(content))
 
     def _line_delete(self, line):
         """Delete the given line, move the other ones up."""
@@ -313,10 +320,17 @@ class Window:
         return False
 
 
+class StatusWindow(Window):
+    def __init__(self, ui):
+        super(StatusWindow, self).__init__(ui, ui.max_lines() - 2, 0, 1, ui.max_columns())
+        self._ui_window._window.bkgd(curses.A_REVERSE)
+        self._buffer.content = '(0,0)'
+
+
 class CommandWindow(Window):
     """Class representing the command window."""
     def __init__(self, ui):
-        super(CommandWindow, self).__init__(ui, ui.max_lines() - 2, 0, 2, ui.max_columns())
+        super(CommandWindow, self).__init__(ui, ui.max_lines() - 1, 0, 1, ui.max_columns())
 
         self.key_bindings[Key('C-j')] = self.evaluate
 
@@ -338,6 +352,7 @@ class Editor:
     """Class representing the editor."""
     def __init__(self, ui):
         self._ui = ui
+        self._status_window = StatusWindow(ui)
         self._command_window = CommandWindow(ui)
         self._windows = list()
         self._window_welcome()
@@ -400,6 +415,9 @@ class CursesWindow(UIWindow):
         self._window = self._ui._screen.subpad(n_lines, n_columns, line, column)
         self._window.keypad(True)
 
+    def background_set(self, color):
+        self._window.bkgd()
+
     def cursor_set(self, line, column, update_cursor=True):
         """Set the position of the cursor."""
         self._window.move(line, column)
@@ -407,18 +425,19 @@ class CursesWindow(UIWindow):
             self._cursor_line, self._cursor_column = line, column
             self._window.noutrefresh()
 
-    def line_update(self, line, content):
+    def line_update(self, line, content, attributes):
         """Show the given content in the specified line."""
-        self._window.addstr(line, 0, content)
+        for i, (c, a) in enumerate(zip(content, attributes)):
+            self._window.addch(line, i, c, a)
         self._window.clrtoeol()
         self.cursor_set(self._cursor_line, self._cursor_column, False)
         self._window.noutrefresh()
 
-    def line_insert(self, line, content):
+    def line_insert(self, line, content, attributes):
         """Insert a new line with the given content under the given line."""
         self.cursor_set(line, 0, False)
         self._window.insertln()
-        self.line_update(line, content)
+        self.line_update(line, content, attributes)
 
     def line_delete(self, line):
         """Delete the given line, move the other ones up."""
