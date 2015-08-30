@@ -24,12 +24,12 @@ class UIWindow(ABC):
         return
 
     @abstractmethod
-    def line_update(self, content, line):
+    def line_update(self, line, content):
         """Show the given content in the specified line."""
         return
 
     @abstractmethod
-    def line_insert(self, content, line):
+    def line_insert(self, line, content):
         """Insert a new line with the given content under the given line."""
         return
 
@@ -110,7 +110,7 @@ class Key:
 
 class Buffer:
     """Class representing a text buffer."""
-    def __init__(self, window=None, content=''):
+    def __init__(self, content='', window=None):
         self._windows = {window} if window else set()
         self.content = content
 
@@ -141,43 +141,41 @@ class Buffer:
 
     def char_before(self, line, column):
         """Return the position of the character before the given one,
-           or the given one if there is not any."""
+           or None if there is not one."""
         if column > 0:
             return line, column - 1
         elif line > 0:
             return line - 1, len(self._lines[line-1])
-        return 0, 0
 
     def char_after(self, line, column):
         """Return the position of the character after the given one,
-           or the given one if there is not any."""
+           or None if there is not one."""
         if column < len(self._lines[line]):
             return line, column + 1
         elif line+1 < len(self._lines):
             return line + 1, 0
-        return line, column
 
     def char_insert(self, char, line, column):
         """Insert a character at the given position, and update the line."""
         self._lines[line] = self._lines[line][:column] + char + self._lines[line][column:]
-        self._windows_line_update(self._lines[line], line)
+        self._windows_line_update(line, self._lines[line])
 
     def char_delete(self, line, column):
         """Delete the character at the given position and update.
            If the character is a newline, merge the two consecutive lines."""
         if column == len(self._lines[line]):
             self._lines[line: line+2] = [self._lines[line] + self._lines[line+1]]
-            self._windows_line_update(self.lines[line], line)
+            self._windows_line_update(line, self.lines[line])
             self._windows_line_delete(line+1)
-        elif line > 0:
+        else:
             self._lines[line] = self._lines[line][:column] + self._lines[line][column+1:]
-            self._windows_line_update(self._lines[line], line)
+            self._windows_line_update(line, self._lines[line])
 
     def line_break(self, line, column):
         """Break the given line in two lines at the given column."""
         self._lines[line: line+1] = [self._lines[line][:column], self._lines[line][column:]]
-        self._windows_line_update(self._lines[line], line)
-        self._windows_line_insert(self._lines[line+1], line+1)
+        self._windows_line_update(line, self._lines[line])
+        self._windows_line_insert(line+1, self._lines[line+1])
 
     def window_link(self, window):
         """Link the given window to the buffer."""
@@ -191,7 +189,7 @@ class Buffer:
     def window_update(self, window):
         """Update the content of the given window."""
         for line, content in enumerate(self._lines):
-            window._line_update(content, line)
+            window._line_update(line, content)
             window.cursor_begin_buffer()
 
     def windows_update(self):
@@ -199,15 +197,15 @@ class Buffer:
         for window in self._windows:
             self.window_update(window)
 
-    def _windows_line_update(self, content, line):
+    def _windows_line_update(self, line, content):
         """Update the given line to show the given content in the linked windows."""
         for window in self._windows:
-            window._line_update(content, line)
+            window._line_update(line, content)
 
-    def _windows_line_insert(self, content, line):
+    def _windows_line_insert(self, line, content):
         """Insert a line at the given position to show the given content in the linked windows."""
         for window in self._windows:
-            window._line_insert(content, line)
+            window._line_insert(line, content)
 
     def _windows_line_delete(self, line):
         """Delete the given line from the linked windows."""
@@ -220,7 +218,7 @@ class Window:
     def __init__(self, ui, line, column, n_lines, n_columns, buffer=None):
         self._ui = ui
         self._ui_window = ui.window_create(line, column, n_lines, n_columns)
-        self.buffer = buffer if buffer else Buffer(self)  # Call the setter.
+        self.buffer = buffer if buffer else Buffer(window=self)  # Call the setter.
 
         self.key_bindings = {
             Key('LEFT'):  self.cursor_back,
@@ -238,11 +236,8 @@ class Window:
 
     @buffer.setter
     def buffer(self, buffer):
-        try:
-            self._buffer = buffer
-            self._buffer.window_link(self)
-        except AttributeError:
-            self._buffer = Buffer(self, buffer)
+        self._buffer = buffer
+        self._buffer.window_link(self)
 
     @property
     def cursor(self):
@@ -255,19 +250,25 @@ class Window:
 
     def cursor_back(self):
         """Move the cursor back by one character."""
-        return self.cursor_set(*self._buffer.char_before(*self.cursor))
+        try:
+            self.cursor_set(*self._buffer.char_before(*self.cursor))
+        except TypeError:
+            pass
 
     def cursor_forward(self):
         """Move the cursor forward by one character."""
-        return self.cursor_set(*self._buffer.char_after(*self.cursor))
+        try:
+            self.cursor_set(*self._buffer.char_after(*self.cursor))
+        except TypeError:
+            pass
 
     def cursor_begin_buffer(self):
         """Move the cursor to the beginning of the buffer."""
-        return self.cursor_set(0, 0)
+        self.cursor_set(0, 0)
 
     def cursor_end_buffer(self):
         """Move the cursor to the end of the buffer."""
-        return self.cursor_set(*self._buffer.end)
+        self.cursor_set(*self._buffer.end)
 
     def char_insert(self, char, line=None, column=None):
         """Insert a character at the given position."""
@@ -278,8 +279,11 @@ class Window:
     def char_delete(self, line=None, column=None):
         """Delete the character at the given position."""
         line, column = (line, column) if (line, column) != (None, None) else self.cursor
-        self.cursor_set(*self._buffer.char_before(line, column))
-        self._buffer.char_delete(*self._buffer.char_before(line, column))
+        try:
+            self.cursor_set(*self._buffer.char_before(line, column))
+            self._buffer.char_delete(*self._buffer.char_before(line, column))
+        except TypeError:
+            pass
 
     def line_break(self, line=None, column=None):
         """Break the given line in two lines at the given column."""
@@ -287,13 +291,13 @@ class Window:
         self._buffer.line_break(line, column)
         self.cursor_set(*self._buffer.char_after(line, column))
 
-    def _line_update(self, content, line):
+    def _line_update(self, line, content):
         """Show the given content in the specified line."""
-        self._ui_window.line_update(content, line)
+        self._ui_window.line_update(line, content)
 
-    def _line_insert(self, content, line):
+    def _line_insert(self, line, content):
         """Insert a new line with the given content under the given line."""
-        self._ui_window.line_insert(content, line)
+        self._ui_window.line_insert(line, content)
 
     def _line_delete(self, line):
         """Delete the given line, move the other ones up."""
@@ -379,7 +383,7 @@ class Editor:
     def _window_welcome(self):
         """Show a welcome window."""
         window = self.window_create(0, 0, self._ui.max_lines() - 2, self._ui.max_columns(),
-                                    'Welcome to Yugen, the subtly profound text editor.')
+                                    Buffer('Welcome to Yugen, the subtly profound text editor.'))
         window.cursor_end_buffer()
 
     def _key_handle(self, key):
@@ -403,18 +407,18 @@ class CursesWindow(UIWindow):
             self._cursor_line, self._cursor_column = line, column
             self._window.noutrefresh()
 
-    def line_update(self, content, line):
+    def line_update(self, line, content):
         """Show the given content in the specified line."""
         self._window.addstr(line, 0, content)
         self._window.clrtoeol()
         self.cursor_set(self._cursor_line, self._cursor_column, False)
         self._window.noutrefresh()
 
-    def line_insert(self, content, line):
+    def line_insert(self, line, content):
         """Insert a new line with the given content under the given line."""
         self.cursor_set(line, 0, False)
         self._window.insertln()
-        self.line_update(content, line)
+        self.line_update(line, content)
 
     def line_delete(self, line):
         """Delete the given line, move the other ones up."""
