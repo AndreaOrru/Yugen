@@ -40,7 +40,7 @@ class UIWindow(ABC):
 
     @abstractmethod
     def line_insert(self, line, content, attributes):
-        """Insert a new line with the given content under the given line."""
+        """Insert a line with the given content and move the next ones down."""
         return
 
     @abstractmethod
@@ -321,8 +321,9 @@ class TextWindow(Window):
         """Delete the character at the given position."""
         line, column = (line, column) if (line, column) != (None, None) else self.cursor
         try:
-            self.cursor_set(*self._buffer.char_before(line, column))
-            self._buffer.char_delete(*self._buffer.char_before(line, column))
+            before = self._buffer.char_before(line, column)
+            self._buffer.char_delete(*before)
+            self.cursor_set(*before)
         except TypeError:
             pass
 
@@ -426,7 +427,7 @@ class Editor:
     def _window_welcome(self):
         """Show a welcome window."""
         window = self.window_create(0, 0, self._ui.max_lines() - 2, self._ui.max_columns(),
-                                    Buffer('Welcome to Yugen, the subtly profound text editor.\nErtu.'))
+                                    Buffer('Welcome to Yugen, the subtly profound text editor.'))
         window.cursor_end_buffer()
 
     def _key_handle(self, key):
@@ -445,9 +446,10 @@ class CursesWindow(UIWindow):
 
         self._cursor_column = 0
         self._cursor_line = 0
+        self._scroll = 0
 
     def refresh(self):
-        self._window.noutrefresh(0, 0, self._line, self._column, self._line + self._n_lines, self._column + self._n_columns)
+        self._window.noutrefresh(self._scroll, 0, self._line, self._column, self._line + self._n_lines, self._column + self._n_columns)
 
     def attributes_set(self, colors, properties):
         super(CursesWindow, self).attributes_set(colors, properties)
@@ -455,6 +457,11 @@ class CursesWindow(UIWindow):
         self.refresh()
 
     def cursor_draw(self, line, column):
+        if line >= self._scroll + self._n_lines:
+            self._scroll += line - (self._scroll + self._n_lines) + 1
+        elif line < self._scroll:
+            self._scroll -= self._scroll - line
+
         self._window.chgat(self._cursor_line, self._cursor_column, 1, curses.A_NORMAL)
         self._cursor_line, self._cursor_column = line, column
         self._window.chgat(self._cursor_line, self._cursor_column, 1, curses.A_REVERSE)
@@ -472,7 +479,11 @@ class CursesWindow(UIWindow):
         self.refresh()
 
     def line_insert(self, line, content, attributes):
-        """Insert a new line with the given content under the given line."""
+        """Insert a line with the given content and move the next ones down."""
+        height, width = self._window.getmaxyx()
+        if line >= height:
+            self._window.resize(height*2, width)
+
         self._window.move(line, 0)
         self._window.insertln()
         self.line_update(line, content, attributes)
