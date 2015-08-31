@@ -5,6 +5,7 @@ import curses
 from curses import ascii
 from curses.ascii import isctrl, isprint, unctrl
 from abc import ABC, abstractmethod, abstractproperty
+from colors import Color
 
 
 class UIWindow(ABC):
@@ -28,12 +29,12 @@ class UIWindow(ABC):
         return
 
     @abstractmethod
-    def line_update(self, line, content, attributes):
+    def line_update(self, line, content, colors):
         """Show the given content in the specified line."""
         return
 
     @abstractmethod
-    def line_insert(self, line, content, attributes):
+    def line_insert(self, line, content, colors):
         """Insert a new line with the given content under the given line."""
         return
 
@@ -274,8 +275,8 @@ class Window:
         """Move the cursor to the end of the buffer."""
         self.cursor_set(*self._buffer.end)
 
-    def decorate(self, content):
-        return (0,) * len(content)
+    def _decorate(self, content):
+        return (Color.Red3,) * len(content)
 
     def char_insert(self, char, line=None, column=None):
         """Insert a character at the given position."""
@@ -300,11 +301,11 @@ class Window:
 
     def _line_update(self, line, content):
         """Show the given content in the specified line."""
-        self._ui_window.line_update(line, content, self.decorate(content))
+        self._ui_window.line_update(line, content, self._decorate(content))
 
     def _line_insert(self, line, content):
         """Insert a new line with the given content under the given line."""
-        self._ui_window.line_insert(line, content, self.decorate(content))
+        self._ui_window.line_insert(line, content, self._decorate(content))
 
     def _line_delete(self, line):
         """Delete the given line, move the other ones up."""
@@ -323,8 +324,8 @@ class Window:
 class StatusWindow(Window):
     def __init__(self, ui):
         super(StatusWindow, self).__init__(ui, ui.max_lines() - 2, 0, 1, ui.max_columns())
-        self._ui_window._window.bkgd(curses.A_REVERSE)
-        self._buffer.content = '(0,0)'
+        self._ui_window.background_set(Color.BlueViolet)
+        self._buffer.content = '(0, 0)'
 
 
 class CommandWindow(Window):
@@ -416,7 +417,7 @@ class CursesWindow(UIWindow):
         self._window.keypad(True)
 
     def background_set(self, color):
-        self._window.bkgd()
+        self._window.bkgd(' ', color)
 
     def cursor_set(self, line, column, update_cursor=True):
         """Set the position of the cursor."""
@@ -425,19 +426,19 @@ class CursesWindow(UIWindow):
             self._cursor_line, self._cursor_column = line, column
             self._window.noutrefresh()
 
-    def line_update(self, line, content, attributes):
+    def line_update(self, line, content, colors):
         """Show the given content in the specified line."""
-        for i, (c, a) in enumerate(zip(content, attributes)):
-            self._window.addch(line, i, c, a)
+        for i, (char, color) in enumerate(zip(content, colors)):
+            self._window.addch(line, i, char, self._ui.color_pair(color))
         self._window.clrtoeol()
         self.cursor_set(self._cursor_line, self._cursor_column, False)
         self._window.noutrefresh()
 
-    def line_insert(self, line, content, attributes):
+    def line_insert(self, line, content, colors):
         """Insert a new line with the given content under the given line."""
         self.cursor_set(line, 0, False)
         self._window.insertln()
-        self.line_update(line, content, attributes)
+        self.line_update(line, content, colors)
 
     def line_delete(self, line):
         """Delete the given line, move the other ones up."""
@@ -462,9 +463,8 @@ class Curses(UI):
     """Class representing the curses toolkit."""
     def __init__(self, screen):
         self._screen = screen
+        self._color_pair = {0}
         curses.raw()
-        curses.init_pair(1, curses.COLOR_RED, curses.COLOR_BLACK)
-        curses.init_pair(2, curses.COLOR_GREEN, curses.COLOR_BLACK)
 
     def max_lines(self):
         """Maximum number of lines on screen."""
@@ -477,6 +477,12 @@ class Curses(UI):
     def screen_update(self):
         """Update the screen."""
         curses.doupdate()
+
+    def color_pair(self, color):
+        if color not in self._color_pair:
+            curses.init_pair(color, color, 0)
+            self._color_pair.add(color)
+        return curses.color_pair(color)
 
     def window_create(self, line, column, n_lines, n_columns):
         """Create a new window."""
