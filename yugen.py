@@ -149,6 +149,14 @@ class Buffer:
         """Line and column of the last character in the buffer."""
         return len(self._lines) - 1, len(self._lines[-1])
 
+    def char_up(self, line, column):
+        if line > 0:
+            return line - 1, min(column, len(self._lines[line-1]))
+
+    def char_down(self, line, column):
+        if line+1 < len(self._lines):
+            return line + 1, min(column, len(self._lines[line+1]))
+
     def char_before(self, line, column):
         """Return the position of the character before the given one,
            or None if there is not one."""
@@ -260,16 +268,23 @@ class TextWindow(Window):
     def __init__(self, ui, line, column, n_lines, n_columns, buffer=None):
         self._cursor_line = 0
         self._cursor_column = 0
+        self._target_column = 0
 
         super(TextWindow, self).__init__(ui, line, column, n_lines, n_columns, buffer)
 
         self.key_bindings = {
+            Key('UP'):    self.cursor_up,
+            Key('DOWN'):  self.cursor_down,
             Key('LEFT'):  self.cursor_back,
             Key('RIGHT'): self.cursor_forward,
             Key('C-j'):   self.line_break,
+            Key('M-i'):   self.cursor_up,
+            Key('M-k'):   self.cursor_down,
             Key('M-j'):   self.cursor_back,
             Key('M-l'):   self.cursor_forward,
             Key('DEL'):   self.char_delete,
+            Key('M-b'):   self.cursor_begin_buffer,
+            Key('M-e'):   self.cursor_end_buffer,
         }
 
     @property
@@ -283,10 +298,23 @@ class TextWindow(Window):
         self._cursor_column = column
         self.cursor_draw()
 
+    def cursor_up(self):
+        try:
+            self.cursor_set(*self._buffer.char_up(self._cursor_line, self._target_column))
+        except TypeError:
+            pass
+
+    def cursor_down(self):
+        try:
+            self.cursor_set(*self._buffer.char_down(self._cursor_line, self._target_column))
+        except TypeError:
+            pass
+
     def cursor_back(self):
         """Move the cursor back by one character."""
         try:
             self.cursor_set(*self._buffer.char_before(*self.cursor))
+            self._target_column = self._cursor_column
         except TypeError:
             pass
 
@@ -294,6 +322,7 @@ class TextWindow(Window):
         """Move the cursor forward by one character."""
         try:
             self.cursor_set(*self._buffer.char_after(*self.cursor))
+            self._target_column = self._cursor_column
         except TypeError:
             pass
 
