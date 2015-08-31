@@ -1,7 +1,29 @@
 from enum import IntEnum
 
 
+class Property(IntEnum):
+    Default = 0
+    Reversed = 1 << 18
+
+
 class Color(IntEnum):
+    Default = -1
+    Black = 0
+    Red = 1
+    Green = 2
+    Yellow = 3
+    Blue = 4
+    Magenta = 5
+    Cyan = 6
+    LightGrey = 7
+    DarkGrey = 8
+    LightRed = 9
+    LightGreen = 10
+    LightYellow = 11
+    LightBlue = 12
+    LightMagenta  = 13
+    LightCyan = 14
+    White = 15
     Grey0 = 16
     NavyBlue = 17
     DarkBlue = 18
@@ -81,7 +103,7 @@ class Color(IntEnum):
     DarkSlateGray3 = 116
     SkyBlue1 = 117
     Chartreuse1 = 118
-    LightGreen = 119
+    LightGreen1 = 119
     PaleGreen1 = 121
     DarkSlateGray1 = 123
     Red3 = 124

@@ -5,7 +5,7 @@ import curses
 from curses import ascii
 from curses.ascii import isctrl, isprint, unctrl
 from abc import ABC, abstractmethod, abstractproperty
-from colors import Color
+from attributes import Color, Property
 
 
 class UIWindow(ABC):
@@ -20,7 +20,7 @@ class UIWindow(ABC):
         self._cursor_column = 0
 
     @abstractmethod
-    def background_set(self, color):
+    def attributes_set(self, colors, properties):
         return
 
     @abstractmethod
@@ -29,12 +29,12 @@ class UIWindow(ABC):
         return
 
     @abstractmethod
-    def line_update(self, line, content, colors):
+    def line_update(self, line, content, attributes):
         """Show the given content in the specified line."""
         return
 
     @abstractmethod
-    def line_insert(self, line, content, colors):
+    def line_insert(self, line, content, attributes):
         """Insert a new line with the given content under the given line."""
         return
 
@@ -276,7 +276,8 @@ class Window:
         self.cursor_set(*self._buffer.end)
 
     def _decorate(self, content):
-        return (Color.Red3,) * len(content)
+        for char in content:
+            yield (Color.Default, Property.Default)
 
     def char_insert(self, char, line=None, column=None):
         """Insert a character at the given position."""
@@ -324,8 +325,10 @@ class Window:
 class StatusWindow(Window):
     def __init__(self, ui):
         super(StatusWindow, self).__init__(ui, ui.max_lines() - 2, 0, 1, ui.max_columns())
-        self._ui_window.background_set(Color.BlueViolet)
-        self._buffer.content = '(0, 0)'
+        self._ui_window.attributes_set(Color.Default, Property.Reversed)
+
+    def update(self, cursor):
+        self._buffer.content = '({},{})'.format(*cursor)
 
 
 class CommandWindow(Window):
@@ -367,6 +370,7 @@ class Editor:
     def run(self):
         """Run the editor."""
         while True:
+            self._status_window.update(self._windows[0].cursor)
             self._ui.screen_update()
             self._key_handle(self._ui.key_get(self._window_active._ui_window))
 
@@ -416,8 +420,10 @@ class CursesWindow(UIWindow):
         self._window = self._ui._screen.subpad(n_lines, n_columns, line, column)
         self._window.keypad(True)
 
-    def background_set(self, color):
-        self._window.bkgd(' ', color)
+    def attributes_set(self, colors, properties):
+        super(CursesWindow, self).attributes_set(colors, properties)
+        self._window.bkgd(' ', self._ui.color_pair(colors) | properties)
+        self._window.noutrefresh()
 
     def cursor_set(self, line, column, update_cursor=True):
         """Set the position of the cursor."""
@@ -426,19 +432,19 @@ class CursesWindow(UIWindow):
             self._cursor_line, self._cursor_column = line, column
             self._window.noutrefresh()
 
-    def line_update(self, line, content, colors):
+    def line_update(self, line, content, attributes):
         """Show the given content in the specified line."""
-        for i, (char, color) in enumerate(zip(content, colors)):
-            self._window.addch(line, i, char, self._ui.color_pair(color))
+        for column, (char, attribute) in enumerate(zip(content, attributes)):
+            self._window.addstr(line, column, char, self._ui.color_pair(attribute[0]) | attribute[1])
         self._window.clrtoeol()
         self.cursor_set(self._cursor_line, self._cursor_column, False)
         self._window.noutrefresh()
 
-    def line_insert(self, line, content, colors):
+    def line_insert(self, line, content, attributes):
         """Insert a new line with the given content under the given line."""
         self.cursor_set(line, 0, False)
         self._window.insertln()
-        self.line_update(line, content, colors)
+        self.line_update(line, content, attributes)
 
     def line_delete(self, line):
         """Delete the given line, move the other ones up."""
@@ -463,7 +469,7 @@ class Curses(UI):
     """Class representing the curses toolkit."""
     def __init__(self, screen):
         self._screen = screen
-        self._color_pair = {0}
+        self._color_pair = {Color.Default: 0}
         curses.raw()
 
     def max_lines(self):
@@ -478,11 +484,14 @@ class Curses(UI):
         """Update the screen."""
         curses.doupdate()
 
-    def color_pair(self, color):
-        if color not in self._color_pair:
-            curses.init_pair(color, color, 0)
-            self._color_pair.add(color)
-        return curses.color_pair(color)
+    def color_pair(self, attribute):
+        try:
+            n = self._color_pair[attribute]
+        except KeyError:
+            n = len(self._color_pair)
+            curses.init_pair(n, *attribute)
+            self._color_pair[attribute] = n
+        return curses.color_pair(n)
 
     def window_create(self, line, column, n_lines, n_columns):
         """Create a new window."""
