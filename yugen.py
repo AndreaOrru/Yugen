@@ -16,16 +16,21 @@ class UIWindow(ABC):
         self._column = column
         self._n_lines = n_lines
         self._n_columns = n_columns
-        self._cursor_line = 0
-        self._cursor_column = 0
+
+    @abstractmethod
+    def refresh(self):
+        return
 
     @abstractmethod
     def attributes_set(self, colors, properties):
         return
 
     @abstractmethod
-    def cursor_set(self, line, column):
-        """Set the position of the cursor."""
+    def cursor_draw(self, line, column):
+        return
+
+    @abstractmethod
+    def cursor_hide(self):
         return
 
     @abstractmethod
@@ -195,7 +200,6 @@ class Buffer:
         """Update the content of the given window."""
         for line, content in enumerate(self._lines):
             window._line_update(line, content)
-            window.cursor_begin_buffer()
 
     def windows_update(self):
         """Update the content of the linked windows."""
@@ -218,21 +222,11 @@ class Buffer:
             window._line_delete(line)
 
 
-class Window:
-    """Class representing a text-editing window."""
+class Window(ABC):
     def __init__(self, ui, line, column, n_lines, n_columns, buffer=None):
         self._ui = ui
         self._ui_window = ui.window_create(line, column, n_lines, n_columns)
         self.buffer = buffer if buffer else Buffer(window=self)  # Call the setter.
-
-        self.key_bindings = {
-            Key('LEFT'):  self.cursor_back,
-            Key('RIGHT'): self.cursor_forward,
-            Key('C-j'):   self.line_break,
-            Key('M-j'):   self.cursor_back,
-            Key('M-l'):   self.cursor_forward,
-            Key('DEL'):   self.char_delete,
-        }
 
     @property
     def buffer(self):
@@ -244,14 +238,50 @@ class Window:
         self._buffer = buffer
         self._buffer.window_link(self)
 
+    def _decorate(self, content):
+        for char in content:
+            yield (Color.Default, Property.Default)
+
+    def _line_update(self, line, content):
+        """Show the given content in the specified line."""
+        self._ui_window.line_update(line, content, self._decorate(content))
+
+    def _line_insert(self, line, content):
+        """Insert a new line with the given content under the given line."""
+        self._ui_window.line_insert(line, content, self._decorate(content))
+
+    def _line_delete(self, line):
+        """Delete the given line, move the other ones up."""
+        self._ui_window.line_delete(line)
+
+
+class TextWindow(Window):
+    """Class representing a text-editing window."""
+    def __init__(self, ui, line, column, n_lines, n_columns, buffer=None):
+        self._cursor_line = 0
+        self._cursor_column = 0
+
+        super(TextWindow, self).__init__(ui, line, column, n_lines, n_columns, buffer)
+
+        self.key_bindings = {
+            Key('LEFT'):  self.cursor_back,
+            Key('RIGHT'): self.cursor_forward,
+            Key('C-j'):   self.line_break,
+            Key('M-j'):   self.cursor_back,
+            Key('M-l'):   self.cursor_forward,
+            Key('DEL'):   self.char_delete,
+        }
+
     @property
     def cursor(self):
         """Position of the cursor."""
-        return self._ui_window._cursor_line, self._ui_window._cursor_column
+        return self._cursor_line, self._cursor_column
 
     def cursor_set(self, line, column):
         """Set the position of the cursor."""
-        self._ui_window.cursor_set(line, column)
+        self._cursor_line = line
+        self._cursor_column = column
+        self.cursor_draw()
 
     def cursor_back(self):
         """Move the cursor back by one character."""
@@ -275,9 +305,11 @@ class Window:
         """Move the cursor to the end of the buffer."""
         self.cursor_set(*self._buffer.end)
 
-    def _decorate(self, content):
-        for char in content:
-            yield (Color.Default, Property.Default)
+    def cursor_draw(self):
+        self._ui_window.cursor_draw(self._cursor_line, self._cursor_column)
+
+    def cursor_hide(self):
+        self._ui_window.cursor_hide()
 
     def char_insert(self, char, line=None, column=None):
         """Insert a character at the given position."""
@@ -300,18 +332,6 @@ class Window:
         self._buffer.line_break(line, column)
         self.cursor_set(*self._buffer.char_after(line, column))
 
-    def _line_update(self, line, content):
-        """Show the given content in the specified line."""
-        self._ui_window.line_update(line, content, self._decorate(content))
-
-    def _line_insert(self, line, content):
-        """Insert a new line with the given content under the given line."""
-        self._ui_window.line_insert(line, content, self._decorate(content))
-
-    def _line_delete(self, line):
-        """Delete the given line, move the other ones up."""
-        self._ui_window.line_delete(line)
-
     def _key_handle(self, key):
         """Handle the given keypress. Return True if it was handled, False otherwise."""
         if key.is_printable():
@@ -328,10 +348,10 @@ class StatusWindow(Window):
         self._ui_window.attributes_set(Color.Default, Property.Reversed)
 
     def update(self, cursor):
-        self._buffer.content = '({},{})'.format(*cursor)
+        self._buffer.content = '({},{})'.format(cursor[0] + 1, cursor[1])
 
 
-class CommandWindow(Window):
+class CommandWindow(TextWindow):
     """Class representing the command window."""
     def __init__(self, ui):
         super(CommandWindow, self).__init__(ui, ui.max_lines() - 1, 0, 1, ui.max_columns())
@@ -356,8 +376,10 @@ class Editor:
     """Class representing the editor."""
     def __init__(self, ui):
         self._ui = ui
+
         self._status_window = StatusWindow(ui)
         self._command_window = CommandWindow(ui)
+
         self._windows = list()
         self._window_welcome()
         self._window_active = self._windows[0]
@@ -376,15 +398,16 @@ class Editor:
 
     def command_window_toggle(self):
         """Switch the focus to and from the command window."""
+        self._window_active.cursor_hide()
         if self._window_active is self._command_window:
             self._window_active = self._windows[0]
         else:
             self._window_active = self._command_window
-        self._window_active.cursor_set(*self._window_active.cursor)
+        self._window_active.cursor_draw()
 
     def window_create(self, line, column, n_lines, n_columns, buffer):
         """Create a new text window."""
-        window = Window(self._ui, line, column, n_lines, n_columns, buffer)
+        window = TextWindow(self._ui, line, column, n_lines, n_columns, buffer)
         self._window_link(window)
         return window
 
@@ -403,7 +426,7 @@ class Editor:
     def _window_welcome(self):
         """Show a welcome window."""
         window = self.window_create(0, 0, self._ui.max_lines() - 2, self._ui.max_columns(),
-                                    Buffer('Welcome to Yugen, the subtly profound text editor.'))
+                                    Buffer('Welcome to Yugen, the subtly profound text editor.\nErtu.'))
         window.cursor_end_buffer()
 
     def _key_handle(self, key):
@@ -417,40 +440,48 @@ class CursesWindow(UIWindow):
     """Class representing a window in curses."""
     def __init__(self, ui, line, column, n_lines, n_columns):
         super(CursesWindow, self).__init__(ui, line, column, n_lines, n_columns)
-        self._window = self._ui._screen.subpad(n_lines, n_columns, line, column)
+        self._window = curses.newpad(self._n_lines, self._n_columns)
         self._window.keypad(True)
+
+        self._cursor_column = 0
+        self._cursor_line = 0
+
+    def refresh(self):
+        self._window.noutrefresh(0, 0, self._line, self._column, self._line + self._n_lines, self._column + self._n_columns)
 
     def attributes_set(self, colors, properties):
         super(CursesWindow, self).attributes_set(colors, properties)
         self._window.bkgd(' ', self._ui.color_pair(colors) | properties)
-        self._window.noutrefresh()
+        self.refresh()
 
-    def cursor_set(self, line, column, update_cursor=True):
-        """Set the position of the cursor."""
-        self._window.move(line, column)
-        if update_cursor:
-            self._cursor_line, self._cursor_column = line, column
-            self._window.noutrefresh()
+    def cursor_draw(self, line, column):
+        self._window.chgat(self._cursor_line, self._cursor_column, 1, curses.A_NORMAL)
+        self._cursor_line, self._cursor_column = line, column
+        self._window.chgat(self._cursor_line, self._cursor_column, 1, curses.A_REVERSE)
+        self.refresh()
+
+    def cursor_hide(self):
+        self._window.chgat(self._cursor_line, self._cursor_column, 1, curses.A_NORMAL)
+        self.refresh()
 
     def line_update(self, line, content, attributes):
         """Show the given content in the specified line."""
         for column, (char, attribute) in enumerate(zip(content, attributes)):
             self._window.addstr(line, column, char, self._ui.color_pair(attribute[0]) | attribute[1])
         self._window.clrtoeol()
-        self.cursor_set(self._cursor_line, self._cursor_column, False)
-        self._window.noutrefresh()
+        self.refresh()
 
     def line_insert(self, line, content, attributes):
         """Insert a new line with the given content under the given line."""
-        self.cursor_set(line, 0, False)
+        self._window.move(line, 0)
         self._window.insertln()
         self.line_update(line, content, attributes)
 
     def line_delete(self, line):
         """Delete the given line, move the other ones up."""
-        self.cursor_set(line, 0, False)
+        self._window.move(line, 0)
         self._window.deleteln()
-        self.cursor_set(self._cursor_line, self._cursor_column, False)
+        self.refresh()
 
     def key_get(self):
         """Wait for a keypress from inside the window and return it."""
@@ -471,6 +502,7 @@ class Curses(UI):
         self._screen = screen
         self._color_pair = {Color.Default: 0}
         curses.raw()
+        curses.curs_set(0)
 
     def max_lines(self):
         """Maximum number of lines on screen."""
