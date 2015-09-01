@@ -235,9 +235,9 @@ class Buffer:
 
 
 class Window(ABC):
-    def __init__(self, ui, line, column, n_lines, n_columns, buffer=None):
-        self._ui = ui
-        self._ui_window = ui.window_create(line, column, n_lines, n_columns)
+    def __init__(self, editor, line, column, n_lines, n_columns, buffer=None):
+        self._ui = editor._ui
+        self._ui_window = self._ui.window_create(line, column, n_lines, n_columns)
         self.buffer = buffer if buffer else Buffer(window=self)  # Call the setter.
 
     @property
@@ -269,12 +269,12 @@ class Window(ABC):
 
 class TextWindow(Window):
     """Class representing a text-editing window."""
-    def __init__(self, ui, line, column, n_lines, n_columns, buffer=None):
+    def __init__(self, editor, line, column, n_lines, n_columns, buffer=None):
         self._cursor_line = 0
         self._cursor_column = 0
         self._target_column = 0
 
-        super(TextWindow, self).__init__(ui, line, column, n_lines, n_columns, buffer)
+        super(TextWindow, self).__init__(editor, line, column, n_lines, n_columns, buffer)
 
         self.key_bindings = {
             Key('UP'):    self.cursor_up,
@@ -362,8 +362,8 @@ class TextWindow(Window):
 
 
 class StatusWindow(Window):
-    def __init__(self, ui):
-        super(StatusWindow, self).__init__(ui, ui.max_lines() - 2, 0, 1, ui.max_columns())
+    def __init__(self, editor):
+        super(StatusWindow, self).__init__(editor, editor._ui.max_lines() - 2, 0, 1, editor._ui.max_columns())
         self._ui_window.attributes_set(Color.Default, Property.Reversed)
 
     def update(self, cursor):
@@ -373,7 +373,7 @@ class StatusWindow(Window):
 class CommandWindow(TextWindow):
     """Class representing the command window."""
     def __init__(self, editor):
-        super(CommandWindow, self).__init__(editor._ui, editor._ui.max_lines() - 1, 0, 1, editor._ui.max_columns())
+        super(CommandWindow, self).__init__(editor, editor._ui.max_lines() - 1, 0, 1, editor._ui.max_columns())
         self._editor = editor
 
         self._scope = self._build_scope(lambda: self._editor.window_editing.buffer)
@@ -414,7 +414,7 @@ class Editor:
         self._window_welcome()
         self._window_focus = self._windows[0]
 
-        self._status_window = StatusWindow(ui)
+        self._status_window = StatusWindow(self)
         self._command_window = CommandWindow(self)
 
         self.key_bindings = {
@@ -444,7 +444,7 @@ class Editor:
 
     def window_create(self, line, column, n_lines, n_columns, buffer):
         """Create a new text window."""
-        window = TextWindow(self._ui, line, column, n_lines, n_columns, buffer)
+        window = TextWindow(self, line, column, n_lines, n_columns, buffer)
         self._window_link(window)
         return window
 
