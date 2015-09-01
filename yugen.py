@@ -6,6 +6,8 @@ from curses import ascii
 from curses.ascii import isctrl, isprint, unctrl
 from abc import ABC, abstractmethod, abstractproperty
 from attributes import Color, Property
+from inspect import getmembers, isroutine
+from functools import partial
 
 
 class UIWindow(ABC):
@@ -289,8 +291,6 @@ class TextWindow(Window):
             Key('M-e'):   self.cursor_end_buffer,
         }
 
-        self.scope = {n: eval('s.' + n, {'s': self}) for n in dir(self) if n[0] != '_'}
-
     @property
     def cursor(self):
         """Position of the cursor."""
@@ -372,19 +372,32 @@ class StatusWindow(Window):
 
 class CommandWindow(TextWindow):
     """Class representing the command window."""
-    def __init__(self, ui, editor):
-        super(CommandWindow, self).__init__(ui, ui.max_lines() - 1, 0, 1, ui.max_columns())
+    def __init__(self, editor):
+        super(CommandWindow, self).__init__(editor._ui, editor._ui.max_lines() - 1, 0, 1, editor._ui.max_columns())
         self._editor = editor
 
+        self._scope = self._build_scope(lambda: self._editor.window_editing.buffer)
+        self._scope.update(self._build_scope(lambda: self._editor.window_editing))
+        self._scope.update(self._build_scope(lambda: self._editor))
+
         self.key_bindings[Key('C-j')] = self.evaluate
+
+    def _build_scope(self, get_instance):
+        cls = type(get_instance())
+        scope = dict(getmembers(cls, lambda x: isroutine(x) and x.__name__[0] != '_'))
+        scope = {n: partial(self._interactive, get_instance, f) for (n, f) in scope.items()}
+        return scope
+
+    def _interactive(self, get_instance, function, *args, **kwargs):
+        return function(get_instance(), *args, **kwargs)
 
     def evaluate(self):
         """Evaluate the content of the command window."""
         try:
             try:
-                self._buffer.content = str(eval(self._buffer.content, self._editor.window_editing.scope))
+                self._buffer.content = str(eval(self._buffer.content, self._scope))
             except SyntaxError:
-                exec(self._buffer.content, self._editor.window_editing.scope)
+                exec(self._buffer.content, self._scope)
                 self._buffer.content = ''
         except Exception as exception:
             self._buffer.content = str(exception)
@@ -397,12 +410,12 @@ class Editor:
     def __init__(self, ui):
         self._ui = ui
 
-        self._status_window = StatusWindow(ui)
-        self._command_window = CommandWindow(ui, self)
-
         self._windows = list()
         self._window_welcome()
         self._window_focus = self._windows[0]
+
+        self._status_window = StatusWindow(ui)
+        self._command_window = CommandWindow(self)
 
         self.key_bindings = {
             Key('M-q'): quit,
