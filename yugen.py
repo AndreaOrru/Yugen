@@ -78,8 +78,8 @@ class UI(ABC):
         return
 
     @abstractmethod
-    def key_get(self, ui_window_active):
-        """Wait for a keypress and return it."""
+    def key_get(self, ui_window):
+        """Wait for a keypress from a window and return it."""
         return
 
 
@@ -159,19 +159,21 @@ class Buffer:
 
     def char_before(self, line, column):
         """Return the position of the character before the given one,
-           or None if there is not one."""
+           or the position itself if there is not any."""
         if column > 0:
             return line, column - 1
         elif line > 0:
             return line - 1, len(self._lines[line-1])
+        return line, column
 
     def char_after(self, line, column):
         """Return the position of the character after the given one,
-           or None if there is not one."""
+           or the position itself if there is not any."""
         if column < len(self._lines[line]):
             return line, column + 1
         elif line+1 < len(self._lines):
             return line + 1, 0
+        return line, column
 
     def char_insert(self, char, line, column):
         """Insert a character at the given position, and update the line."""
@@ -287,6 +289,8 @@ class TextWindow(Window):
             Key('M-e'):   self.cursor_end_buffer,
         }
 
+        self.scope = {n: eval('s.' + n, {'s': self}) for n in dir(self) if n[0] != '_'}
+
     @property
     def cursor(self):
         """Position of the cursor."""
@@ -299,32 +303,20 @@ class TextWindow(Window):
         self.cursor_draw()
 
     def cursor_up(self):
-        try:
-            self.cursor_set(*self._buffer.char_up(self._cursor_line, self._target_column))
-        except TypeError:
-            pass
+        self.cursor_set(*self._buffer.char_up(self._cursor_line, self._target_column))
 
     def cursor_down(self):
-        try:
-            self.cursor_set(*self._buffer.char_down(self._cursor_line, self._target_column))
-        except TypeError:
-            pass
+        self.cursor_set(*self._buffer.char_down(self._cursor_line, self._target_column))
 
     def cursor_back(self):
         """Move the cursor back by one character."""
-        try:
-            self.cursor_set(*self._buffer.char_before(*self.cursor))
-            self._target_column = self._cursor_column
-        except TypeError:
-            pass
+        self.cursor_set(*self._buffer.char_before(*self.cursor))
+        self._target_column = self._cursor_column
 
     def cursor_forward(self):
         """Move the cursor forward by one character."""
-        try:
-            self.cursor_set(*self._buffer.char_after(*self.cursor))
-            self._target_column = self._cursor_column
-        except TypeError:
-            pass
+        self.cursor_set(*self._buffer.char_after(*self.cursor))
+        self._target_column = self._cursor_column
 
     def cursor_begin_buffer(self):
         """Move the cursor to the beginning of the buffer."""
@@ -349,12 +341,9 @@ class TextWindow(Window):
     def char_delete(self, line=None, column=None):
         """Delete the character at the given position."""
         line, column = (line, column) if (line, column) != (None, None) else self.cursor
-        try:
-            before = self._buffer.char_before(line, column)
-            self._buffer.char_delete(*before)
-            self.cursor_set(*before)
-        except TypeError:
-            pass
+        before = self._buffer.char_before(line, column)
+        self._buffer.char_delete(*before)
+        self.cursor_set(*before)
 
     def line_break(self, line=None, column=None):
         """Break the given line in two lines at the given column."""
@@ -383,8 +372,9 @@ class StatusWindow(Window):
 
 class CommandWindow(TextWindow):
     """Class representing the command window."""
-    def __init__(self, ui):
+    def __init__(self, ui, editor):
         super(CommandWindow, self).__init__(ui, ui.max_lines() - 1, 0, 1, ui.max_columns())
+        self._editor = editor
 
         self.key_bindings[Key('C-j')] = self.evaluate
 
@@ -392,9 +382,9 @@ class CommandWindow(TextWindow):
         """Evaluate the content of the command window."""
         try:
             try:
-                self._buffer.content = str(eval(self._buffer.content))
+                self._buffer.content = str(eval(self._buffer.content, self._editor.window_editing.scope))
             except SyntaxError:
-                exec(self._buffer.content)
+                exec(self._buffer.content, self._editor.window_editing.scope)
                 self._buffer.content = ''
         except Exception as exception:
             self._buffer.content = str(exception)
@@ -408,11 +398,11 @@ class Editor:
         self._ui = ui
 
         self._status_window = StatusWindow(ui)
-        self._command_window = CommandWindow(ui)
+        self._command_window = CommandWindow(ui, self)
 
         self._windows = list()
         self._window_welcome()
-        self._window_active = self._windows[0]
+        self._window_focus = self._windows[0]
 
         self.key_bindings = {
             Key('M-q'): quit,
@@ -424,16 +414,20 @@ class Editor:
         while True:
             self._status_window.update(self._windows[0].cursor)
             self._ui.screen_update()
-            self._key_handle(self._ui.key_get(self._window_active._ui_window))
+            self._key_handle(self._ui.key_get(self._window_focus._ui_window))
 
     def command_window_toggle(self):
         """Switch the focus to and from the command window."""
-        self._window_active.cursor_hide()
-        if self._window_active is self._command_window:
-            self._window_active = self._windows[0]
+        self._window_focus.cursor_hide()
+        if self._window_focus is self._command_window:
+            self._window_focus = self.window_editing
         else:
-            self._window_active = self._command_window
-        self._window_active.cursor_draw()
+            self._window_focus = self._command_window
+        self._window_focus.cursor_draw()
+
+    @property
+    def window_editing(self):
+        return self._windows[0]
 
     def window_create(self, line, column, n_lines, n_columns, buffer):
         """Create a new text window."""
@@ -461,7 +455,7 @@ class Editor:
 
     def _key_handle(self, key):
         """Handle the given keypress."""
-        if not self._window_active._key_handle(key):
+        if not self._window_focus._key_handle(key):
             if key in self.key_bindings:
                 self.key_bindings[key]()
 
@@ -569,9 +563,9 @@ class Curses(UI):
         """Create a new window."""
         return CursesWindow(self, line, column, n_lines, n_columns)
 
-    def key_get(self, ui_window_active):
-        """Wait for a keypress and return it."""
-        return ui_window_active.key_get()
+    def key_get(self, ui_window):
+        """Wait for a keypress from a window and return it."""
+        return ui_window.key_get()
 
 
 if __name__ == '__main__':
