@@ -1,34 +1,203 @@
 """Generic editor functionalities."""
 
+from attribute import Color, Property
+from key import Key
+from inspect import getmembers, isroutine
+from functools import partial
 
-class Editor:
-    """Class representing the whole editor.
 
-    Editor has exactly one StatusWindow and one CommandWindow. It can
-    contain one or more TextWindow.
+class Buffer:
+    """Class representing a text buffer.
+
+    Buffer is a container for text. Every Buffer is associated with
+    zero or more Window objects that display the text.
+    If the buffer's content changes in any way, all the windows receive
+    notifications about the change.
     """
 
-    def __init__(self, ui):
-        self._ui = ui
+    def __init__(self, content='', window=None):
+        """Initialize a Buffer object.
 
-        self._text_windows = list()
-        self._status_window = StatusWindow(self)
-        self._command_window = CommandWindow(self)
-
-        self.key_bindings = {
-            Key('M-q'): quit,
-        }
-
-    def _run(self):
-        """Start the execution loop."""
-        while True:
-            self._ui.screen_update()
-            self.key_handle(self._window_focused.key_get())
+        Args:
+            content: String containing the initial text of the buffer. (default '')
+            window: Window object to be linked to the buffer. (default None)
+        """
+        self._lines = content.split('\n')
+        self._windows = {window} if window else set()
 
     @property
-    def window_current(self):
-        """TextWindow currently being edited (read-only)."""
-        return self._text_windows[0]
+    def content(self):
+        """String containing the buffer's text."""
+        return '\n'.join(self._lines)
+
+    @content.setter
+    def content(self, content):
+        self._lines = content.split('\n')
+        self._windows_update()
+
+    @property
+    def lines(self):
+        """List of strings, one per line in the buffer's text.
+        Does not include newlines.
+        """
+        return self._lines
+
+    @property
+    def windows(self):
+        """Set of Window objects linked to the buffer (read-only)."""
+        return self._windows
+
+    def window_link(self, window):
+        """Link a window to the buffer.
+
+        Args:
+            window: Window object to be linked.
+        """
+        self._windows.add(window)
+        window._update()
+
+    def window_unlink(self, window):
+        """Unlink a window from the buffer.
+
+        Args:
+            window: Window object to unlink.
+        """
+        self._windows.discard(window)
+
+    def _windows_update(self):
+        """Update the content of the linked windows."""
+        for window in self._windows:
+            window._update()
+
+    def _windows_line_update(self, line):
+        """Notify all the linked windows that a line has been changed.
+
+        Args:
+            line: Index of the modified line.
+        """
+        for window in self._windows:
+            window._line_update(line)
+
+    def _windows_line_insert(self, line):
+        """Notify all the linked windows that a line has been inserted.
+
+        Args:
+            line: Index of the inserted line.
+        """
+        for window in self._windows:
+            window._line_insert(line)
+
+    def _windows_line_delete(self, line):
+        """Notify all the linked windows that a line has been deleted.
+
+        Args:
+            line: Index of the deleted line.
+        """
+        for window in self._windows:
+            window._line_delete(line)
+
+    @property
+    def end(self):
+        """Coordinates of the last character in the buffer (read-only)."""
+        return len(self._lines) - 1, len(self._lines[-1])
+
+    def char_above(self, line, column):
+        """Get the coordinates of the character above the given one.
+
+        Args:
+            line: Index of the character's line.
+            column: Index of the character's column.
+
+        Returns:
+            (line, column): Coordinates corresponding to the character above.
+            None: If there are no characters above the given one.
+        """
+        if line > 0:
+            return line-1, min(column, len(self._lines[line-1]))
+
+    def char_below(self, line, column):
+        """Get the coordinates of the character below the given one.
+
+        Args:
+            line: Index of the character's line.
+            column: Index of the character's column.
+
+        Returns:
+            (line, column): Coordinates corresponding to the character below.
+            None: If there are no characters below the given one.
+        """
+        if line+1 < len(self._lines):
+            return line+1, min(column, len(self._lines[line+1]))
+
+    def char_before(self, line, column):
+        """Get the coordinates of the character before the given one.
+
+        Args:
+            line: Index of the character's line.
+            column: Index of the character's column.
+
+        Returns:
+            (line, column): Coordinates corresponding to the previous character.
+            None: If there are no characters before the given one.
+        """
+        if column > 0:
+            return line, column - 1
+        elif line > 0:
+            return line-1, len(self._lines[line-1])
+
+    def char_after(self, line, column):
+        """Get the coordinates of the character after the given one.
+
+        Args:
+            line: Index of the character's line.
+            column: Index of the character's column.
+
+        Returns:
+            (line, column): Coordinates corresponding to the next character.
+            None: If there are no characters after the given one.
+        """
+        if column < len(self._lines[line]):
+            return line, column + 1
+        elif line+1 < len(self._lines):
+            return line + 1, 0
+
+    def char_insert(self, char, line, column):
+        """Insert a character at the given position, moving the other characters accordingly.
+
+        Args:
+            char: Charactere to insert.
+            line: Index of the line where to insert the character.
+            column: Index of the line where to insert the character.
+        """
+        self._lines[line] = self._lines[line][:column] + char + self._lines[line][column:]
+        self._windows_line_update(line)
+
+    def char_delete(self, line, column):
+        """Delete the character at the given position, moving the other characters accordingly.
+        If the character is at the end of the line, merge the line with the next one.
+
+        Args:
+            line: Index of the line where to delete a character.
+            column: Index of the line where to delete a character.
+        """
+        if column == len(self._lines[line]):
+            self._lines[line: line+2] = [self._lines[line] + self._lines[line+1]]
+            self._windows_line_update(line)
+            self._windows_line_delete(line+1)
+        else:
+            self._lines[line] = self._lines[line][:column] + self._lines[line][column+1:]
+            self._windows_line_update(line)
+
+    def line_break(self, line, column):
+        """Break a line in two lines at the given column.
+
+        Args:
+            line: Index of the line to break.
+            column: Index of the column where to break the line.
+        """
+        self._lines[line: line+1] = [self._lines[line][:column], self._lines[line][column:]]
+        self._windows_line_update(line)
+        self._windows_line_insert(line+1)
 
 
 class Window:
@@ -77,6 +246,10 @@ class Window:
         for char in content:
             yield (Color.Default, Property.Default)
 
+    def _update(self):
+        for line in range(len(self._buffer.lines)):
+            self._line_update(line)
+
     def _line_update(self, line):
         """Update a buffer line in the user interface.
 
@@ -104,195 +277,216 @@ class Window:
         self._ui_window.line_delete(line)
 
 
-class Buffer:
-    """Class representing a text buffer.
+class TextWindow(Window):
+    """Class representing a window for text editing.
 
-    Buffer is a container for text. Every Buffer is associated with
-    zero or more Window objects that display the text.
-    If the buffer's content changes in any way, all the windows receive
-    notifications about the change.
+    It supports a cursor and the modification of text.
     """
 
-    def __init__(self, content='', window=None):
-        """Initialize a Buffer object.
+    def __init__(self, *args, **kwargs):
+        """Initialize a TextWindow object.
 
-        Args:
-            content: String containing the initial text of the buffer. (default '')
-            window: Window object to be linked to the buffer. (default None)
+        See parent constructor (Window.__init__) for details.
         """
-        self._lines = content.split('\n')
-        self._windows = {window} if window else set()
+        super(TextWindow, self).__init__(*args, **kwargs)
+
+        self._cursor_line = 0
+        self._cursor_column = 0
+        self._target_column = 0
+
+        self.key_bindings = {
+            Key('UP'):    self.cursor_up,
+            Key('DOWN'):  self.cursor_down,
+            Key('LEFT'):  self.cursor_back,
+            Key('RIGHT'): self.cursor_forward,
+            Key('C-j'):   self.line_break,
+            Key('M-i'):   self.cursor_up,
+            Key('M-k'):   self.cursor_down,
+            Key('M-j'):   self.cursor_back,
+            Key('M-l'):   self.cursor_forward,
+            Key('DEL'):   self.char_delete_before,
+            Key('M-b'):   self.cursor_begin,
+            Key('M-e'):   self.cursor_end,
+        }
 
     @property
-    def content(self):
-        """String containing the buffer's text."""
-        return '\n'.join(self._lines)
+    def cursor(self):
+        """Position of the cursor."""
+        return self._cursor_line, self._cursor_column
 
-    @content.setter
-    def content(self, content):
-        self._lines = content.split('\n')
-        self._windows_update()
+    @cursor.setter
+    def cursor(self, cursor):
+        self._cursor_line, self._cursor_column = cursor
 
-    @property
-    def lines(self):
-        """List of strings, one per line in the buffer's text.
-        Does not include newlines.
-        """
-        return self._lines
+    def cursor_up(self):
+        """Move the cursor up one line to reach the target column."""
+        self.cursor = self._buffer.char_up(self._cursor_line, self._target_column)
 
-    @property
-    def windows(self):
-        """Set of Window objects linked to the buffer (read-only)."""
-        return self._windows
+    def cursor_down(self):
+        """Move the cursor down one line to reach the target column."""
+        self.cursor = self._buffer.char_down(self._cursor_line, self._target_column)
 
-    def window_link(self, window: 'Window'):
-        """Link a window to the buffer.
+    def cursor_back(self):
+        """Move the cursor back by one character and reset the target column."""
+        cursor = self._buffer.char_before(*self.cursor)
+        self.cursor = cursor if cursor else self.cursor
+        self._target_column = self._cursor_column
 
-        Args:
-            window: Window object to be linked.
-        """
-        self._windows.add(window)
-        window._update()
+    def cursor_forward(self):
+        """Move the cursor forward by one character and reset the target column."""
+        cursor = self._buffer.char_after(*self.cursor)
+        self.cursor = cursor if cursor else self.cursor
+        self._target_column = self._cursor_column
 
-    def window_unlink(self, window: 'Window'):
-        """Unlink a window from the buffer.
+    def cursor_begin(self):
+        """Move the cursor to the beginning of the buffer."""
+        self.cursor = 0, 0
 
-        Args:
-            window: Window object to unlink.
-        """
-        self._windows.discard(window)
+    def cursor_end(self):
+        """Move the cursor to the end of the buffer."""
+        self.cursor = self._buffer.end
 
-    def _windows_update(self):
-        """Update the content of the linked windows."""
-        for window in self._windows:
-            window._update()
+    def char_insert(self, char):
+        self._buffer.char_insert(char, *self.cursor)
+        self.cursor_forward()
 
-    def _windows_line_update(self, line: 'Line'):
-        """Notify all the linked windows that a line has been changed.
+    def char_delete(self):
+        self._buffer.char_delete(*self.cursor)
+        self.cursor = self._cursor_line, min(self._cursor_column, len(self._buffer.lines[self._cursor_line]))
 
-        Args:
-            line: Index of the modified line.
-        """
-        for window in self._windows:
-            window._line_update(line)
+    def char_delete_before(self):
+        before = self._buffer.char_before(*self.cursor)
+        self._buffer.char_delete(*before)
+        self.cursor = before
 
-    def _windows_line_insert(self, line: 'Line'):
-        """Notify all the linked windows that a line has been inserted.
+    def line_break(self):
+        self._buffer.line_break(*self.cursor)
+        self.cursor = self._buffer.char_after(*self.cursor)
 
-        Args:
-            line: Index of the inserted line.
-        """
-        for window in self._windows:
-            window._line_insert(line)
-
-    def _windows_line_delete(self, line: 'Line'):
-        """Notify all the linked windows that a line has been deleted.
-
-        Args:
-            line: Index of the deleted line.
-        """
-        for window in self._windows:
-            window._line_delete(line)
-
-    @property
-    def end(self):
-        """Coordinates of the last character in the buffer (read-only)."""
-        return len(self._lines) - 1, len(self._lines[-1])
-
-    def char_above(self, line: 'Line', column: 'Column'):
-        """Get the coordinates of the character above the given one.
-
-        Args:
-            line: Index of the character's line.
-            column: Index of the character's column.
-
-        Returns:
-            (line, column): Coordinates corresponding to the character above.
-            None: If there are no characters above the given one.
-        """
-        if line > 0:
-            return line-1, min(column, len(self._lines[line-1]))
-
-    def char_below(self, line: 'Line', column: 'Column'):
-        """Get the coordinates of the character below the given one.
-
-        Args:
-            line: Index of the character's line.
-            column: Index of the character's column.
-
-        Returns:
-            (line, column): Coordinates corresponding to the character below.
-            None: If there are no characters below the given one.
-        """
-        if line+1 < len(self._lines):
-            return line+1, min(column, len(self._lines[line+1]))
-
-    def char_before(self, line: 'Line', column: 'Column'):
-        """Get the coordinates of the character before the given one.
-
-        Args:
-            line: Index of the character's line.
-            column: Index of the character's column.
-
-        Returns:
-            (line, column): Coordinates corresponding to the previous character.
-            None: If there are no characters before the given one.
-        """
-        if column > 0:
-            return line, column - 1
-        elif line > 0:
-            return line_1, len(self._lines[line-1])
-
-    def char_after(self, line: 'Line', column: 'Column'):
-        """Get the coordinates of the character after the given one.
-
-        Args:
-            line: Index of the character's line.
-            column: Index of the character's column.
-
-        Returns:
-            (line, column): Coordinates corresponding to the next character.
-            None: If there are no characters after the given one.
-        """
-        if column < len(self._lines[line]):
-            return line, column + 1
-        elif line+1 < len(self._lines):
-            return line + 1, 0
-
-    def char_insert(self, char: 'Character', line: 'Line', column: 'Column'):
-        """Insert a character at the given position, moving the other characters accordingly.
-
-        Args:
-            char: Charactere to insert.
-            line: Index of the line where to insert the character.
-            column: Index of the line where to insert the character.
-        """
-        self._lines[line] = self._lines[line][:column] + char + self._lines[line][column:]
-        self._windows_line_update(line)
-
-    def char_delete(self, line: 'Line', column: 'Column'):
-        """Delete the character at the given position, moving the other characters accordingly.
-        If the character is at the end of the line, merge the line with the next one.
-
-        Args:
-            line: Index of the line where to delete a character.
-            column: Index of the line where to delete a character.
-        """
-        if column == len(self._lines[line]):
-            self._lines[line: line+2] = [self._lines[line] + self._lines[line+1]]
-            self._windows_line_update(line)
-            self._windows_line_delete(line+1)
+    def key_handle(self, key):
+        if key.is_printable():
+            self.char_insert(key.char())
         else:
-            self._lines[line] = self._lines[line][:column] + self._lines[line][column+1:]
-            self._windows_line_update(line)
+            try:
+                self.key_bindings[key]()
+            except KeyError:
+                return False
+        return True
 
-    def line_break(self, line: 'Line', column: 'Column'):
-        """Break a line in two lines at the given column.
+
+class StatusWindow(Window):
+    def __init__(self, editor):
+        super(StatusWindow, self).__init__(editor, editor._ui.max_lines-2, 0, 1, editor._ui.max_columns)
+        self._ui_window.attributes_set(Color.Default, Property.Reversed)
+
+
+class CommandWindow(TextWindow):
+    """Class representing the command window."""
+    def __init__(self, editor):
+        super(CommandWindow, self).__init__(editor, editor._ui.max_lines-1, 0, 1, editor._ui.max_columns)
+        self._editor = editor
+
+        self._scope = self._build_scope(lambda: self._editor.window_current.buffer)
+        self._scope.update(self._build_scope(lambda: self._editor.window_current))
+        self._scope.update(self._build_scope(lambda: self._editor))
+
+        self.key_bindings[Key('C-j')] = self.evaluate
+
+    def _build_scope(self, get_instance):
+        cls = type(get_instance())
+        scope = dict(getmembers(cls, lambda x: isroutine(x) and x.__name__[0] != '_'))
+        scope = {n: partial(self._interactive, get_instance, f) for (n, f) in scope.items()}
+        return scope
+
+    def _interactive(self, get_instance, function, *args, **kwargs):
+        return function(get_instance(), *args, **kwargs)
+
+    def evaluate(self):
+        try:
+            try:
+                self._buffer.content = str(eval(self._buffer.content, self._scope))
+            except SyntaxError:
+                exec(self._buffer_content, self._scope)
+                self._buffer.content = ''
+        except Exception as exception:
+            self._buffer.content = str(exception)
+
+        self.cursor_end_buffer()
+
+class Editor:
+    """Class representing the whole editor.
+
+    Editor has exactly one StatusWindow and one CommandWindow. It can
+    contain one or more TextWindow.
+    """
+
+    def __init__(self, ui):
+        """Initialize an Editor object.
 
         Args:
-            line: Index of the line to break.
-            column: Index of the column where to break the line.
+            ui: UI object representing the user interface.
         """
-        self._lines[line: line+1] = [self._lines[line][:column], self._lines[line][column:]]
-        self._windows_line_update(line)
-        self._windows_line_insert(line+1)
+        self._ui = ui
+
+        self._windows = list()
+        self._window_welcome()
+        self._window_focused = self._windows[0]
+
+        self._status_window = StatusWindow(self)
+        self._command_window = CommandWindow(self)
+
+        self.key_bindings = {
+            Key('M-q'): quit,
+        }
+
+    def _run(self):
+        """Start the execution loop."""
+        while True:
+            self._ui.refresh()
+            self.key_handle(self._window_focused._ui_window.key_get())
+
+    @property
+    def window_current(self):
+        """Window currently being edited (read-only)."""
+        return self._windows[0]
+
+    def window_add(self, window):
+        """Add a window to the editor.
+
+        Args:
+            window: Window object to be added to the editor.
+        """
+        if window not in self._windows:
+            self._windows.append(window)
+
+    def window_remove(self, window):
+        """Remove a window from the editor.
+
+        Args:
+            window: Window object to be removed from the editor.
+        """
+        try:
+            self._windows.remove(window)
+        except ValueError:
+            pass
+
+    def _window_welcome(self):
+        """Create and show the welcome window."""
+        window = TextWindow(self, 0, 0, self._ui.max_lines-2, self._ui.max_columns,
+                            Buffer('Welcome to Yugen, the subtly profound text editor.'))
+        window.cursor_end()
+        self.window_add(window)
+
+    def key_handle(self, key):
+        """Handle the given keypress.
+        Gives priority to lower levels in the hierarchy, i.e.
+        window keybindings are checked before global ones.
+
+        Args:
+            key: Key object representing the keys pressed.
+        """
+        if not self._window_focused.key_handle(key):
+            try:
+                self.key_bindings[key]()
+            except KeyError:
+                pass

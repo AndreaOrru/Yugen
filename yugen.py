@@ -3,10 +3,11 @@
 
 import curses
 from editor import Editor
+from ui_curses import Curses
 
 
 if __name__ == '__main__':
     def main(stdscr):
         editor = Editor(Curses(stdscr))
-        editor.run()
+        editor._run()
     curses.wrapper(main)
