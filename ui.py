@@ -10,7 +10,7 @@ class UIWindow(ABC):
         self._n_columns = n_columns
 
         self._cursor_show = False
-        self._cursor = 0, 0
+        self._cursor = (0, 0)
 
     @property
     def cursor(self):

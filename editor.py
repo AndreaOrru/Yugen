@@ -247,17 +247,9 @@ class Window:
         self._buffer = buffer
         self._buffer.window_link(self)
 
-    def _decorate(self, content):
-        """Generate attributes for the text to display.
-
-        Args:
-            content: Text to display.
-
-        Yields:
-            (Color, Property): Attributes for a character.
-        """
-        for char in content:
-            yield (Color.Default, Property.Default)
+    def _format(self, line):
+        content = self._buffer.lines[line]
+        return content, ((Color.Defaults, Property.Default),) * len(content)
 
     def _update(self):
         for line in range(len(self._buffer.lines)):
@@ -269,8 +261,8 @@ class Window:
         Args:
             line: Index of the buffer line to be updated.
         """
-        content = self._buffer.lines[line]
-        self._ui_window.line_update(line, content, self._decorate(content))
+        content, attributes = self._format(line)
+        self._ui_window.line_update(line, content, attributes)
 
     def _line_insert(self, line):
         """Insert a new buffer line in the user interface.
@@ -278,8 +270,8 @@ class Window:
         Args:
             line: Index of the buffer line to be inserted.
         """
-        content = self._buffer.lines[line]
-        self._ui_window.line_insert(line, content, self._decorate(content))
+        content, attributes = self._format(line)
+        self._ui_window.line_insert(line, content, attributes)
 
     def _line_delete(self, line):
         """Delete a buffer line from the user interface.
@@ -301,11 +293,13 @@ class TextWindow(Window):
 
         See parent constructor (Window.__init__) for details.
         """
-        super().__init__(*args, **kwargs)
-
-        self._cursor_line = 0
-        self._cursor_column = 0
+        self.__cursor = (0, 0)
         self._target_column = 0
+
+        self._border = 0
+        self._line_numbers = False
+
+        super().__init__(*args, **kwargs)
 
         self.key_bindings = {
             Key('UP'):    self.cursor_up,
@@ -323,43 +317,78 @@ class TextWindow(Window):
             Key('M-e'):   self.cursor_end,
         }
 
+    @property
+    def line_numbers(self):
+        return self._line_numbers
+
+    @line_numbers.setter
+    def line_numbers(self, show):
+        self._line_numbers = show
+        self.line_numbers_refresh()
+
+    def line_numbers_refresh(self):
+        border = len(str(len(self._buffer.lines))) + 1 if self._line_numbers else 0
+        if self._border != border:
+            self._border = border
+            self.cursor = self.cursor
+            super()._update()
+
+    def _line_insert(self, line):
+        super()._line_insert(line)
+        self.line_numbers_refresh()
+
+    def _line_delete(self, line):
+        super()._line_delete(line)
+        self.line_numbers_refresh()
+
+    def _format(self, line):
+        content, attributes = super()._format(line)
+        if self._line_numbers:
+            content = '{:>{}} '.format(line, self._border - 1) + content
+            attributes = self._border*(((Color.White, Color.Black), Property.Default),) + attributes
+
+        return content, attributes
+
     def _update(self):
         super()._update()
+        self.line_numbers_refresh()
         self.cursor_begin()
 
     @property
     def cursor(self):
         """Position of the cursor."""
-        return self._cursor_line, self._cursor_column
+        return self.__cursor
 
     @cursor.setter
     def cursor(self, cursor):
-        self._cursor_line, self._cursor_column = cursor
-        self._ui_window.cursor = cursor
+        self.__cursor = cursor
+        self._ui_window.cursor = cursor[0], cursor[1] + self._border
 
     def cursor_up(self):
         """Move the cursor up one line to reach the target column."""
-        self.cursor = self._buffer.char_above(self._cursor_line, self._target_column)
+        cursor = self._buffer.char_above(self.cursor[0], self._target_column)
+        self.cursor = cursor if cursor else self.cursor
 
     def cursor_down(self):
         """Move the cursor down one line to reach the target column."""
-        self.cursor = self._buffer.char_below(self._cursor_line, self._target_column)
+        cursor = self._buffer.char_below(self.cursor[0], self._target_column)
+        self.cursor = cursor if cursor else self.cursor
 
     def cursor_back(self):
         """Move the cursor back by one character and reset the target column."""
         cursor = self._buffer.char_before(*self.cursor)
         self.cursor = cursor if cursor else self.cursor
-        self._target_column = self._cursor_column
+        self._target_column = self.cursor[1]
 
     def cursor_forward(self):
         """Move the cursor forward by one character and reset the target column."""
         cursor = self._buffer.char_after(*self.cursor)
         self.cursor = cursor if cursor else self.cursor
-        self._target_column = self._cursor_column
+        self._target_column = self.cursor[1]
 
     def cursor_begin(self):
         """Move the cursor to the beginning of the buffer."""
-        self.cursor = 0, 0
+        self.cursor = (0, 0)
 
     def cursor_end(self):
         """Move the cursor to the end of the buffer."""
@@ -372,7 +401,7 @@ class TextWindow(Window):
     def char_delete(self):
         try:
             self._buffer.char_delete(*self.cursor)
-            self.cursor = self._cursor_line, min(self._cursor_column, len(self._buffer.lines[self._cursor_line]))
+            self.cursor = self.cursor[0], min(self.cursor[1], len(self._buffer.lines[self.cursor[0]]))
         except IndexError:
             pass
 
@@ -400,7 +429,7 @@ class TextWindow(Window):
 class StatusWindow(Window):
     def __init__(self, editor):
         super().__init__(editor, editor._ui.max_lines-2, 0, 1, editor._ui.max_columns)
-        self._ui_window.attributes_set(Color.Default, Property.Reversed)
+        self._ui_window.attributes_set(Color.Defaults, Property.Reversed)
 
 
 class CommandWindow(TextWindow):

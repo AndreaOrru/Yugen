@@ -11,7 +11,7 @@ class Property(IntEnum):
 
 class Color(IntEnum):
     """Enumeration listing all the possible text colors."""
-    Default = -1
+    Defaults = -1
     Black = 0
     Red = 1
     Green = 2

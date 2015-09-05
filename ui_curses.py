@@ -80,7 +80,7 @@ class Curses(UI):
     def __init__(self, screen):
         super().__init__()
         self._screen = screen
-        self._color_pair = {Color.Default: 0}
+        self._color_pair = {Color.Defaults: 0}
         curses.raw()
         curses.curs_set(0)
 
