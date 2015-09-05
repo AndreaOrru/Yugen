@@ -31,10 +31,12 @@ class CursesWindow(UIWindow):
 
     def refresh(self):
         if self._drawn_cursor:
-            self._window.chgat(self._drawn_cursor[0], self._drawn_cursor[1], 1, curses.A_NORMAL)
+            attr = self._window.inch(*self._drawn_cursor) & ~0xFF & ~curses.A_REVERSE
+            self._window.chgat(self._drawn_cursor[0], self._drawn_cursor[1], 1, attr)
         if self._cursor_show:
             self._drawn_cursor = self._cursor
-            self._window.chgat(self._cursor[0], self._cursor[1], 1, curses.A_REVERSE)
+            attr = (self._window.inch(*self._drawn_cursor) & ~0xFF) | curses.A_REVERSE
+            self._window.chgat(self._cursor[0], self._cursor[1], 1, attr)
         self._window.noutrefresh(self._scroll, 0, self._line, self._column, self._line + self._n_lines, self._column + self._n_columns)
 
     def attributes_set(self, colors, properties):

@@ -1,5 +1,6 @@
 """Generic editor functionalities."""
 
+import re
 from attribute import Color, Property
 from key import Key
 from inspect import getmembers, isdatadescriptor, isroutine
@@ -249,7 +250,7 @@ class Window:
 
     def _format(self, line):
         content = self._buffer.lines[line]
-        return content, ((Color.Defaults, Property.Default),) * len(content)
+        return content, [(Color.Defaults, Property.Default)] * len(content)
 
     def _update(self):
         for line in range(len(self._buffer.lines)):
@@ -343,9 +344,13 @@ class TextWindow(Window):
 
     def _format(self, line):
         content, attributes = super()._format(line)
+
+        for m in re.finditer(r"return", content):
+            attributes[m.start(): m.end()] = [((Color.LightGreen, Color.Black), Property.Default)] * len(m.group())
+
         if self._line_numbers:
             content = '{:>{}} '.format(line, self._border - 1) + content
-            attributes = self._border*(((Color.White, Color.Black), Property.Default),) + attributes
+            attributes = self._border*[((Color.White, Color.Black), Property.Default)] + attributes
 
         return content, attributes
 
