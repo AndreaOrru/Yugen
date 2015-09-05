@@ -8,20 +8,31 @@ from ui import UI, UIWindow
 
 class CursesWindow(UIWindow):
     def __init__(self, ui, line, column, n_lines, n_columns):
-        super(CursesWindow, self).__init__(ui, line, column, n_lines, n_columns)
+        super().__init__(ui, line, column, n_lines, n_columns)
         self._window = curses.newpad(self._n_lines, self._n_columns)
         self._window.keypad(True)
 
         self._scroll = 0
-        self._drawn_cursor = self._cursor
+        self._drawn_cursor = None
 
-    def cursor_hide(self):
-        super(CursesWindow, self).cursor_hide()
-        self._window.chgat(self._cursor[0], self._cursor[1], 1, curses.A_NORMAL)
+    @UIWindow.cursor.getter
+    def cursor(self):
+        return UIWindow.cursor.fget(self)
+
+    @cursor.setter
+    def cursor(self, cursor):
+        UIWindow.cursor.fset(self, cursor)
+
+        line, column = cursor
+        if line >= self._scroll + self._n_lines:
+            self._scroll += line - (self._scroll + self._n_lines) + 1
+        elif line < self._scroll:
+            self._scroll -= self._scroll - line
 
     def refresh(self):
-        if self._cursor_show:
+        if self._drawn_cursor:
             self._window.chgat(self._drawn_cursor[0], self._drawn_cursor[1], 1, curses.A_NORMAL)
+        if self._cursor_show:
             self._drawn_cursor = self._cursor
             self._window.chgat(self._cursor[0], self._cursor[1], 1, curses.A_REVERSE)
         self._window.noutrefresh(self._scroll, 0, self._line, self._column, self._line + self._n_lines, self._column + self._n_columns)
@@ -67,7 +78,7 @@ class CursesWindow(UIWindow):
 class Curses(UI):
     """Class representing the curses toolkit."""
     def __init__(self, screen):
-        super(Curses, self).__init__()
+        super().__init__()
         self._screen = screen
         self._color_pair = {Color.Default: 0}
         curses.raw()

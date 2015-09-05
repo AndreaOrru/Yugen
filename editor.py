@@ -13,6 +13,7 @@ class Buffer:
     zero or more Window objects that display the text.
     If the buffer's content changes in any way, all the windows receive
     notifications about the change.
+    A Buffer can be associated to one file.
     """
 
     def __init__(self, content='', window=None):
@@ -24,6 +25,7 @@ class Buffer:
         """
         self._lines = content.split('\n')
         self._windows = {window} if window else set()
+        self._file_name = None
 
     @property
     def content(self):
@@ -41,6 +43,17 @@ class Buffer:
         Does not include newlines.
         """
         return self._lines
+
+    def file_open(self, file_name):
+        self._file_name = file_name
+        self.content = open(file_name, 'r').read()
+
+    def file_write(self, file_name=None):
+        if file_name is None:
+            file_name = self._file_name
+        elif self._file_name is None:
+            self._file_name = file_name
+        open(file_name, 'w').write(self.content)
 
     @property
     def windows(self):
@@ -288,7 +301,7 @@ class TextWindow(Window):
 
         See parent constructor (Window.__init__) for details.
         """
-        super(TextWindow, self).__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)
 
         self._cursor_line = 0
         self._cursor_column = 0
@@ -310,6 +323,10 @@ class TextWindow(Window):
             Key('M-e'):   self.cursor_end,
         }
 
+    def _update(self):
+        super()._update()
+        self.cursor_begin()
+
     @property
     def cursor(self):
         """Position of the cursor."""
@@ -322,11 +339,11 @@ class TextWindow(Window):
 
     def cursor_up(self):
         """Move the cursor up one line to reach the target column."""
-        self.cursor = self._buffer.char_up(self._cursor_line, self._target_column)
+        self.cursor = self._buffer.char_above(self._cursor_line, self._target_column)
 
     def cursor_down(self):
         """Move the cursor down one line to reach the target column."""
-        self.cursor = self._buffer.char_down(self._cursor_line, self._target_column)
+        self.cursor = self._buffer.char_below(self._cursor_line, self._target_column)
 
     def cursor_back(self):
         """Move the cursor back by one character and reset the target column."""
@@ -382,14 +399,14 @@ class TextWindow(Window):
 
 class StatusWindow(Window):
     def __init__(self, editor):
-        super(StatusWindow, self).__init__(editor, editor._ui.max_lines-2, 0, 1, editor._ui.max_columns)
+        super().__init__(editor, editor._ui.max_lines-2, 0, 1, editor._ui.max_columns)
         self._ui_window.attributes_set(Color.Default, Property.Reversed)
 
 
 class CommandWindow(TextWindow):
     """Class representing the command window."""
     def __init__(self, editor):
-        super(CommandWindow, self).__init__(editor, editor._ui.max_lines-1, 0, 1, editor._ui.max_columns)
+        super().__init__(editor, editor._ui.max_lines-1, 0, 1, editor._ui.max_columns)
         self._editor = editor
 
         self._scope = self._build_scope(lambda: self._editor.window_current.buffer)
