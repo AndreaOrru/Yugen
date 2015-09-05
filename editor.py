@@ -2,7 +2,7 @@
 
 from attribute import Color, Property
 from key import Key
-from inspect import getmembers, isroutine
+from inspect import getmembers, isdatadescriptor, isroutine
 from functools import partial
 
 
@@ -297,7 +297,7 @@ class TextWindow(Window):
         self._target_column = 0
 
         self._border = 0
-        self._line_numbers = False
+        self._line_numbers = True
 
         super().__init__(*args, **kwargs)
 
@@ -436,7 +436,7 @@ class CommandWindow(TextWindow):
     """Class representing the command window."""
     def __init__(self, editor):
         super().__init__(editor, editor._ui.max_lines-1, 0, 1, editor._ui.max_columns)
-        self._editor = editor
+        self.line_numbers = False
 
         self._scope = self._build_scope(lambda: self._editor.window_current.buffer)
         self._scope.update(self._build_scope(lambda: self._editor.window_current))
@@ -446,12 +446,22 @@ class CommandWindow(TextWindow):
 
     def _build_scope(self, get_instance):
         cls = type(get_instance())
-        scope = dict(getmembers(cls, lambda x: isroutine(x) and x.__name__[0] != '_'))
-        scope = {n: partial(self._interactive, get_instance, f) for (n, f) in scope.items()}
+
+        methods = {n: x for (n, x) in getmembers(cls) if n[0] != '_' and isroutine(x)}
+        scope = {n: partial(self._interactive, get_instance, f) for (n, f) in methods.items()}
+
+        properties = {n: x for (n, x) in getmembers(cls) if n[0] != '_' and isdatadescriptor(x)}
+        scope.update({n: partial(self._getset, get_instance, p) for (n, p) in properties.items()})
         return scope
 
     def _interactive(self, get_instance, function, *args, **kwargs):
         return function(get_instance(), *args, **kwargs)
+
+    def _getset(self, get_instance, descriptor, *args):
+        if args:
+            descriptor.fset(get_instance(), args[0] if len(args) == 1 else args)
+        else:
+            return descriptor.fget(get_instance())
 
     def evaluate(self):
         try:
