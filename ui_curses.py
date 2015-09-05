@@ -13,20 +13,28 @@ class CursesWindow(UIWindow):
         self._window.keypad(True)
 
         self._scroll = 0
+        self._drawn_cursor = self._cursor
+
+    def cursor_hide(self):
+        super(CursesWindow, self).cursor_hide()
+        self._window.chgat(self._cursor[0], self._cursor[1], 1, curses.A_NORMAL)
 
     def refresh(self):
+        if self._cursor_show:
+            self._window.chgat(self._drawn_cursor[0], self._drawn_cursor[1], 1, curses.A_NORMAL)
+            self._drawn_cursor = self._cursor
+            self._window.chgat(self._cursor[0], self._cursor[1], 1, curses.A_REVERSE)
         self._window.noutrefresh(self._scroll, 0, self._line, self._column, self._line + self._n_lines, self._column + self._n_columns)
 
     def attributes_set(self, colors, properties):
         self._window.bkgd(' ', self._ui.color_pair(colors) | properties)
-        self.refresh()
 
     def line_update(self, line, content, attributes):
         """Show the given content in the specified line."""
+        self._window.move(line, 0)
         for column, (char, attribute) in enumerate(zip(content, attributes)):
             self._window.addstr(line, column, char, self._ui.color_pair(attribute[0]) | attribute[1])
         self._window.clrtoeol()
-        self.refresh()
 
     def line_insert(self, line, content, attributes):
         """Insert a line with the given content and move the next ones down."""
@@ -42,7 +50,6 @@ class CursesWindow(UIWindow):
         """Delete the given line, move the other ones up."""
         self._window.move(line, 0)
         self._window.deleteln()
-        self.refresh()
 
     def key_get(self):
         """Wait for a keypress from inside the window and return it."""
@@ -60,6 +67,7 @@ class CursesWindow(UIWindow):
 class Curses(UI):
     """Class representing the curses toolkit."""
     def __init__(self, screen):
+        super(Curses, self).__init__()
         self._screen = screen
         self._color_pair = {Color.Default: 0}
         curses.raw()
@@ -77,6 +85,8 @@ class Curses(UI):
 
     def refresh(self):
         """Update the screen."""
+        for window in self._ui_windows:
+            window.refresh()
         curses.doupdate()
 
     def color_pair(self, attribute):
@@ -90,4 +100,6 @@ class Curses(UI):
 
     def window_create(self, line, column, n_lines, n_columns):
         """Create a new window."""
-        return CursesWindow(self, line, column, n_lines, n_columns)
+        window = CursesWindow(self, line, column, n_lines, n_columns)
+        self._ui_windows.append(window)
+        return window

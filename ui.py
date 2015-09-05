@@ -9,6 +9,23 @@ class UIWindow(ABC):
         self._n_lines = n_lines
         self._n_columns = n_columns
 
+        self._cursor_show = False
+        self._cursor = 0, 0
+
+    @property
+    def cursor(self):
+        return self._cursor
+
+    @cursor.setter
+    def cursor(self, cursor):
+        self._cursor = cursor
+
+    def cursor_show(self):
+        self._cursor_show = True
+
+    def cursor_hide(self):
+        self._cursor_show = False
+
     @abstractmethod
     def attributes_set(self, colors, properties):
         return
@@ -35,6 +52,10 @@ class UIWindow(ABC):
 
 
 class UI(ABC):
+    @abstractmethod
+    def __init__(self):
+        self._ui_windows = list()
+
     @abstractproperty
     def max_lines(self):
         return

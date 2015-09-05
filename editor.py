@@ -305,6 +305,7 @@ class TextWindow(Window):
             Key('M-j'):   self.cursor_back,
             Key('M-l'):   self.cursor_forward,
             Key('DEL'):   self.char_delete_before,
+            Key('DC'):    self.char_delete,
             Key('M-b'):   self.cursor_begin,
             Key('M-e'):   self.cursor_end,
         }
@@ -317,6 +318,7 @@ class TextWindow(Window):
     @cursor.setter
     def cursor(self, cursor):
         self._cursor_line, self._cursor_column = cursor
+        self._ui_window.cursor = cursor
 
     def cursor_up(self):
         """Move the cursor up one line to reach the target column."""
@@ -351,13 +353,17 @@ class TextWindow(Window):
         self.cursor_forward()
 
     def char_delete(self):
-        self._buffer.char_delete(*self.cursor)
-        self.cursor = self._cursor_line, min(self._cursor_column, len(self._buffer.lines[self._cursor_line]))
+        try:
+            self._buffer.char_delete(*self.cursor)
+            self.cursor = self._cursor_line, min(self._cursor_column, len(self._buffer.lines[self._cursor_line]))
+        except IndexError:
+            pass
 
     def char_delete_before(self):
         before = self._buffer.char_before(*self.cursor)
-        self._buffer.char_delete(*before)
-        self.cursor = before
+        if before:
+            self._buffer.char_delete(*before)
+            self.cursor = before
 
     def line_break(self):
         self._buffer.line_break(*self.cursor)
@@ -390,7 +396,7 @@ class CommandWindow(TextWindow):
         self._scope.update(self._build_scope(lambda: self._editor.window_current))
         self._scope.update(self._build_scope(lambda: self._editor))
 
-        self.key_bindings[Key('C-j')] = self.evaluate
+        self.key_bindings[Key('C-j')] = lambda: [self.evaluate(), self._editor.command_window_toggle()]
 
     def _build_scope(self, get_instance):
         cls = type(get_instance())
@@ -404,14 +410,16 @@ class CommandWindow(TextWindow):
     def evaluate(self):
         try:
             try:
-                self._buffer.content = str(eval(self._buffer.content, self._scope))
+                result = eval(self._buffer.content, self._scope, globals())
+                self._buffer.content = '' if (result is None) else str(result)
             except SyntaxError:
-                exec(self._buffer_content, self._scope)
+                exec(self._buffer.content, self._scope, globals())
                 self._buffer.content = ''
         except Exception as exception:
             self._buffer.content = str(exception)
 
-        self.cursor_end_buffer()
+        self.cursor_end()
+
 
 class Editor:
     """Class representing the whole editor.
@@ -430,13 +438,14 @@ class Editor:
 
         self._windows = list()
         self._window_welcome()
-        self._window_focused = self._windows[0]
+        self.window_focused = self._windows[0]  # Call setter.
 
         self._status_window = StatusWindow(self)
         self._command_window = CommandWindow(self)
 
         self.key_bindings = {
             Key('M-q'): quit,
+            Key('M-x'): self.command_window_toggle,
         }
 
     def _run(self):
@@ -445,10 +454,30 @@ class Editor:
             self._ui.refresh()
             self.key_handle(self._window_focused._ui_window.key_get())
 
+    def command_window_toggle(self):
+        """Switch the focus to and from the command window."""
+        if self.window_focused is self._command_window:
+            self.window_focused = self.window_current
+        else:
+            self.window_focused = self._command_window
+
     @property
     def window_current(self):
         """Window currently being edited (read-only)."""
         return self._windows[0]
+
+    @property
+    def window_focused(self):
+        return self._window_focused
+
+    @window_focused.setter
+    def window_focused(self, window):
+        try:
+            self._window_focused._ui_window.cursor_hide()
+        except AttributeError:
+            pass
+        self._window_focused = window
+        self._window_focused._ui_window.cursor_show()
 
     def window_add(self, window):
         """Add a window to the editor.
