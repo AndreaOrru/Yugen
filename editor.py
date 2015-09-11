@@ -16,7 +16,6 @@ class Buffer:
     notifications about the change.
     A Buffer can be associated to one file.
     """
-
     def __init__(self, content='', window=None):
         """Initialize a Buffer object.
 
@@ -46,10 +45,21 @@ class Buffer:
         return self._lines
 
     def file_open(self, file_name):
+        """Open a file in the buffer.
+
+        Args:
+            file_name: Path of the file to open.
+        """
         self._file_name = file_name
         self.content = open(file_name, 'r').read()
 
     def file_write(self, file_name=None):
+        """Write the buffer in a file. Set the path as the buffer path
+        if no file was previously associated to the buffer.
+
+        Args:
+            file_name: Path of the file to write. (default None: buffer path)
+        """
         if file_name is None:
             file_name = self._file_name
         elif self._file_name is None:
@@ -222,7 +232,6 @@ class Window:
     Windows respond to buffer's change notifications and update
     themselves accordingly.
     """
-
     def __init__(self, editor, line, column, n_lines, n_columns, buffer=None):
         """Initialize a Window object.
 
@@ -249,10 +258,20 @@ class Window:
         self._buffer.window_link(self)
 
     def _format(self, line):
+        """Format a line of the buffer for visualization.
+
+        Args:
+            line: Index of the buffer line to be formatted.
+
+        Returns:
+            (content, attributes): Tuple containing the characters to be
+                printed, and attributes for each character.
+        """
         content = self._buffer.lines[line]
         return content, [(Color.Defaults, Property.Default)] * len(content)
 
     def _update(self):
+        """Reload the window from its associated buffer."""
         for line in range(len(self._buffer.lines)):
             self._line_update(line)
 
@@ -288,7 +307,6 @@ class TextWindow(Window):
 
     It supports a cursor and the modification of text.
     """
-
     def __init__(self, *args, **kwargs):
         """Initialize a TextWindow object.
 
@@ -320,6 +338,7 @@ class TextWindow(Window):
 
     @property
     def line_numbers(self):
+        """True if line numbers are enabled, False otherwise."""
         return self._line_numbers
 
     @line_numbers.setter
@@ -328,6 +347,7 @@ class TextWindow(Window):
         self.line_numbers_refresh()
 
     def line_numbers_refresh(self):
+        """Refresh the line numbers visualization."""
         border = len(str(len(self._buffer.lines))) + 1 if self._line_numbers else 0
         if self._border != border:
             self._border = border
@@ -335,14 +355,36 @@ class TextWindow(Window):
             super()._update()
 
     def _line_insert(self, line):
+        """Insert a new buffer line in the user interface.
+        Overrides Window._line_insert.
+
+        Args:
+            line: Index of the buffer line to be inserted.
+        """
         super()._line_insert(line)
         self.line_numbers_refresh()
 
     def _line_delete(self, line):
+        """Delete a buffer line from the user interface.
+        Overrides Window._line_delete.
+
+        Args:
+            line: Index of the buffer line to be deleted.
+        """
         super()._line_delete(line)
         self.line_numbers_refresh()
 
     def _format(self, line):
+        """Format a line of the buffer for visualization.
+        Overrides Window._format.
+
+        Args:
+            line: Index of the buffer line to be formatted.
+
+        Returns:
+            (content, attributes): Tuple containing the characters to be
+                printed, and attributes for each character.
+        """
         content, attributes = super()._format(line)
 
         for m in re.finditer(r"return", content):
@@ -355,6 +397,9 @@ class TextWindow(Window):
         return content, attributes
 
     def _update(self):
+        """Reload the window from its associated buffer.
+        Overrides window._update.
+        """
         super()._update()
         self.line_numbers_refresh()
         self.cursor_begin()
@@ -400,10 +445,19 @@ class TextWindow(Window):
         self.cursor = self._buffer.end
 
     def char_insert(self, char):
+        """Insert a character at the current position, updating
+        the buffer and the cursor accordingly.
+
+        Args:
+            char: Charactere to insert.
+        """
         self._buffer.char_insert(char, *self.cursor)
         self.cursor_forward()
 
     def char_delete(self):
+        """Delete the character at the current position, updating
+        the buffer and the cursor accordingly.
+        """
         try:
             self._buffer.char_delete(*self.cursor)
             self.cursor = self.cursor[0], min(self.cursor[1], len(self._buffer.lines[self.cursor[0]]))
@@ -411,16 +465,28 @@ class TextWindow(Window):
             pass
 
     def char_delete_before(self):
+        """Delete the character at the preceding position, updating
+        the buffer and the cursor accordingly.
+        """
         before = self._buffer.char_before(*self.cursor)
         if before:
             self._buffer.char_delete(*before)
             self.cursor = before
 
     def line_break(self):
+        """Break a line in two lines at the current position."""
         self._buffer.line_break(*self.cursor)
         self.cursor = self._buffer.char_after(*self.cursor)
 
     def key_handle(self, key):
+        """Try to handle the given keypress.
+
+        Args:
+            key: Key object representing the keys pressed.
+
+        Returns:
+            True if handled, False otherwise.
+        """
         if key.is_printable():
             self.char_insert(key.char())
         else:
@@ -432,14 +498,28 @@ class TextWindow(Window):
 
 
 class StatusWindow(Window):
+    """Class representing a read-only window for showing the current status."""
+
     def __init__(self, editor):
+        """Initialize a StatusWindow object.
+
+        Args:
+            editor: Editor object to which the window belongs.
+        """
         super().__init__(editor, editor._ui.max_lines-2, 0, 1, editor._ui.max_columns)
         self._ui_window.attributes_set(Color.Defaults, Property.Reversed)
 
 
 class CommandWindow(TextWindow):
-    """Class representing the command window."""
+    """Class representing the command window for running commands, displaying results,
+    and executing code.
+    """
     def __init__(self, editor):
+        """Initialize a CommandWindow object.
+
+        Args:
+            editor: Editor object to which the window belongs.
+        """
         super().__init__(editor, editor._ui.max_lines-1, 0, 1, editor._ui.max_columns)
         self.line_numbers = False
 
@@ -450,25 +530,63 @@ class CommandWindow(TextWindow):
         self.key_bindings[Key('C-j')] = lambda: [self.evaluate(), self._editor.command_window_toggle()]
 
     def _build_scope(self, get_instance):
+        """Build a scope (dictionary) with wrappers of the public methods and properties
+        contained in the class of the object returned by get_instance.
+
+        Wrappers in the scope call get_instance to get the value of self.
+
+        Args:
+            get_instance: Function returning the instance to be used as self.
+
+        Returns:
+            Dictionary containing the built scope.
+        """
         cls = type(get_instance())
 
         methods = {n: x for (n, x) in getmembers(cls) if n[0] != '_' and isroutine(x)}
-        scope = {n: partial(self._interactive, get_instance, f) for (n, f) in methods.items()}
+        scope = {n: partial(self._method, get_instance, f) for (n, f) in methods.items()}
 
         properties = {n: x for (n, x) in getmembers(cls) if n[0] != '_' and isdatadescriptor(x)}
-        scope.update({n: partial(self._getset, get_instance, p) for (n, p) in properties.items()})
+        scope.update({n: partial(self._get_set, get_instance, p) for (n, p) in properties.items()})
         return scope
 
-    def _interactive(self, get_instance, function, *args, **kwargs):
-        return function(get_instance(), *args, **kwargs)
+    @staticmethod
+    def _method(get_instance, method, *args, **kwargs):
+        """Wrapper to methods. Call the method using the result of get_instance
+        as the parameter self, and *args, **kwargs as the other arguments.
 
-    def _getset(self, get_instance, descriptor, *args):
+        Args:
+            get_instance: Function returning the instance to be used as self.
+            method: Method of the class to call.
+            *args, **kwargs: Arguments for the method.
+
+        Returns:
+            Whatever method returns.
+        """
+        return method(get_instance(), *args, **kwargs)
+
+    @staticmethod
+    def _get_set(get_instance, descriptor, *args):
+        """Wrapper to properties. If called with no *args, acts as a getter,
+        otherwise as a setter (with *args as the new value).
+
+        Args:
+            get_instance: Function returning the instance to be used as self.
+            descriptor: Descriptor of the property.
+            *args: None for getter, new value for setter.
+
+        Returns:
+            None if setting, value of the property if getting.
+        """
         if args:
             descriptor.fset(get_instance(), args[0] if len(args) == 1 else args)
         else:
             return descriptor.fget(get_instance())
 
     def evaluate(self):
+        """Evaluate the content of the command window as Python code.
+        Shows the output on the command window itself.
+        """
         try:
             try:
                 result = eval(self._buffer.content, self._scope, globals())
@@ -524,11 +642,12 @@ class Editor:
 
     @property
     def window_current(self):
-        """Window currently being edited (read-only)."""
+        """TextWindow currently being edited (read-only)."""
         return self._windows[0]
 
     @property
     def window_focused(self):
+        """Window on which the cursor is."""
         return self._window_focused
 
     @window_focused.setter
@@ -568,7 +687,7 @@ class Editor:
         self.window_add(window)
 
     def key_handle(self, key):
-        """Handle the given keypress.
+        """Try to handle the given keypress.
         Gives priority to lower levels in the hierarchy, i.e.
         window keybindings are checked before global ones.
 
