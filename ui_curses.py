@@ -1,3 +1,5 @@
+"""Implementation of the user interface with Curses."""
+
 import curses
 from curses import ascii
 from curses.ascii import isctrl, unctrl
@@ -7,6 +9,9 @@ from ui import UI, UIWindow
 
 
 class CursesWindow(UIWindow):
+    """Class representing a window in Curses.
+    See parent class UIWindow for details.
+    """
     def __init__(self, ui, line, column, n_lines, n_columns):
         super().__init__(ui, line, column, n_lines, n_columns)
         self._window = curses.newpad(self._n_lines, self._n_columns)
@@ -43,14 +48,12 @@ class CursesWindow(UIWindow):
         self._window.bkgd(' ', self._ui.color_pair(colors) | properties)
 
     def line_update(self, line, content, attributes):
-        """Show the given content in the specified line."""
         self._window.move(line, 0)
         for column, (char, attribute) in enumerate(zip(content, attributes)):
             self._window.addstr(line, column, char, self._ui.color_pair(attribute[0]) | attribute[1])
         self._window.clrtoeol()
 
     def line_insert(self, line, content, attributes):
-        """Insert a line with the given content and move the next ones down."""
         height, width = self._window.getmaxyx()
         if line >= height:
             self._window.resize(height*2, width)
@@ -60,12 +63,10 @@ class CursesWindow(UIWindow):
         self.line_update(line, content, attributes)
 
     def line_delete(self, line):
-        """Delete the given line, move the other ones up."""
         self._window.move(line, 0)
         self._window.deleteln()
 
     def key_get(self):
-        """Wait for a keypress from inside the window and return it."""
         key1 = self._window.getch()
         key2 = self._window.getch() if (key1 == ascii.ESC) else None
 
@@ -78,7 +79,7 @@ class CursesWindow(UIWindow):
 
 
 class Curses(UI):
-    """Class representing the curses toolkit."""
+    """Class representing the Curses toolkit."""
     def __init__(self, screen):
         super().__init__()
         self._screen = screen
@@ -88,16 +89,13 @@ class Curses(UI):
 
     @property
     def max_lines(self):
-        """Maximum number of lines on screen."""
         return curses.LINES
 
     @property
     def max_columns(self):
-        """Maximum number of columns on screen."""
         return curses.COLS
 
     def refresh(self):
-        """Update the screen."""
         for window in self._ui_windows:
             window.refresh()
         curses.doupdate()
@@ -112,7 +110,6 @@ class Curses(UI):
         return curses.color_pair(n)
 
     def window_create(self, line, column, n_lines, n_columns):
-        """Create a new window."""
         window = CursesWindow(self, line, column, n_lines, n_columns)
         self._ui_windows.append(window)
         return window
