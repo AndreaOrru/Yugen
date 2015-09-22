@@ -17,7 +17,8 @@ class CursesWindow(UIWindow):
         self._window = curses.newpad(self._n_lines, self._n_columns)
         self._window.keypad(True)
 
-        self._scroll = 0
+        self._scroll_lines = 0
+        self._scroll_columns = 0
         self._drawn_cursor = None
 
     @UIWindow.cursor.getter
@@ -27,12 +28,17 @@ class CursesWindow(UIWindow):
     @cursor.setter
     def cursor(self, cursor):
         UIWindow.cursor.fset(self, cursor)
-
         line, column = cursor
-        if line >= self._scroll + self._n_lines:
-            self._scroll += line - (self._scroll + self._n_lines) + 1
-        elif line < self._scroll:
-            self._scroll -= self._scroll - line
+
+        if line >= self._scroll_lines + self._n_lines:
+            self._scroll_lines += line - (self._scroll_lines + self._n_lines) + 1
+        elif line < self._scroll_lines:
+            self._scroll_lines -= self._scroll_lines - line
+
+        if column >= self._scroll_columns + self._n_columns:
+            self._scroll_columns += column - (self._scroll_columns + self._n_columns) + 1
+        elif column < self._scroll_columns:
+            self._scroll_columns -= self._scroll_columns - column
 
     def refresh(self):
         if self._drawn_cursor:
@@ -42,22 +48,29 @@ class CursesWindow(UIWindow):
             self._drawn_cursor = self._cursor
             attr = (self._window.inch(*self._drawn_cursor) & ~0xFF) | curses.A_REVERSE
             self._window.chgat(self._cursor[0], self._cursor[1], 1, attr)
-        self._window.noutrefresh(self._scroll, 0, self._line, self._column, self._line + self._n_lines, self._column + self._n_columns)
+        self._window.noutrefresh(self._scroll_lines, self._scroll_columns,
+                                 self._line, self._column, self._line + self._n_lines-1, self._column + self._n_columns-1)
 
     def attributes_set(self, colors, properties):
         self._window.bkgd(' ', self._ui.color_pair(colors) | properties)
 
+    def __check_size(self, line, length):
+        height, width = self._window.getmaxyx()
+        if line >= height:
+            height *= 2
+        if length >= width:
+            width *= 2
+        self._window.resize(height, width)
+
     def line_update(self, line, content, attributes):
+        self.__check_size(line, len(content))
         self._window.move(line, 0)
         for column, (char, attribute) in enumerate(zip(content, attributes)):
             self._window.addstr(line, column, char, self._ui.color_pair(attribute[0]) | attribute[1])
         self._window.clrtoeol()
 
     def line_insert(self, line, content, attributes):
-        height, width = self._window.getmaxyx()
-        if line >= height:
-            self._window.resize(height*2, width)
-
+        self.__check_size(line, len(content))
         self._window.move(line, 0)
         self._window.insertln()
         self.line_update(line, content, attributes)

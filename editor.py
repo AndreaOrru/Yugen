@@ -3,8 +3,8 @@
 import re
 from attribute import Color, Property
 from key import Key
-from inspect import getmembers, isdatadescriptor, isroutine
-from functools import partial
+from inspect import getmembers, isdatadescriptor, ismethod, isroutine
+from functools import partial, update_wrapper
 
 
 class Buffer:
@@ -315,9 +315,6 @@ class TextWindow(Window):
         self.__cursor = (0, 0)
         self._target_column = 0
 
-        self._border = 0
-        self._line_numbers = True
-
         super().__init__(*args, **kwargs)
 
         self.key_bindings = {
@@ -332,47 +329,10 @@ class TextWindow(Window):
             Key('M-l'):   self.cursor_forward,
             Key('DEL'):   self.char_delete_before,
             Key('DC'):    self.char_delete,
+            Key('C-d'):   self.char_delete,
             Key('M-b'):   self.cursor_begin,
             Key('M-e'):   self.cursor_end,
         }
-
-    @property
-    def line_numbers(self):
-        """True if line numbers are enabled, False otherwise."""
-        return self._line_numbers
-
-    @line_numbers.setter
-    def line_numbers(self, show):
-        self._line_numbers = show
-        self.line_numbers_refresh()
-
-    def line_numbers_refresh(self):
-        """Refresh the line numbers visualization."""
-        border = len(str(len(self._buffer.lines))) + 1 if self._line_numbers else 0
-        if self._border != border:
-            self._border = border
-            self.cursor = self.cursor
-            super()._update()
-
-    def _line_insert(self, line):
-        """Insert a new buffer line in the user interface.
-        Overrides Window._line_insert.
-
-        Args:
-            line: Index of the buffer line to be inserted.
-        """
-        super()._line_insert(line)
-        self.line_numbers_refresh()
-
-    def _line_delete(self, line):
-        """Delete a buffer line from the user interface.
-        Overrides Window._line_delete.
-
-        Args:
-            line: Index of the buffer line to be deleted.
-        """
-        super()._line_delete(line)
-        self.line_numbers_refresh()
 
     def _format(self, line):
         """Format a line of the buffer for visualization.
@@ -390,18 +350,13 @@ class TextWindow(Window):
         for m in re.finditer(r"return", content):
             attributes[m.start(): m.end()] = [((Color.LightGreen, Color.Black), Property.Default)] * len(m.group())
 
-        if self._line_numbers:
-            content = '{:>{}} '.format(line, self._border - 1) + content
-            attributes = self._border*[((Color.White, Color.Black), Property.Default)] + attributes
-
         return content, attributes
 
     def _update(self):
         """Reload the window from its associated buffer.
-        Overrides window._update.
+        Overrides Window._update.
         """
         super()._update()
-        self.line_numbers_refresh()
         self.cursor_begin()
 
     @property
@@ -412,7 +367,7 @@ class TextWindow(Window):
     @cursor.setter
     def cursor(self, cursor):
         self.__cursor = cursor
-        self._ui_window.cursor = cursor[0], cursor[1] + self._border
+        self._ui_window.cursor = cursor[0], cursor[1]
 
     def cursor_up(self):
         """Move the cursor up one line to reach the target column."""
@@ -521,11 +476,11 @@ class CommandWindow(TextWindow):
             editor: Editor object to which the window belongs.
         """
         super().__init__(editor, editor._ui.max_lines-1, 0, 1, editor._ui.max_columns)
-        self.line_numbers = False
 
         self._scope = self._build_scope(lambda: self._editor.window_current.buffer)
         self._scope.update(self._build_scope(lambda: self._editor.window_current))
         self._scope.update(self._build_scope(lambda: self._editor))
+        self._scope.update(self._build_scope(lambda: self))
 
         self.key_bindings[Key('C-j')] = lambda: [self.evaluate(), self._editor.command_window_toggle()]
 
@@ -544,10 +499,10 @@ class CommandWindow(TextWindow):
         cls = type(get_instance())
 
         methods = {n: x for (n, x) in getmembers(cls) if n[0] != '_' and isroutine(x)}
-        scope = {n: partial(self._method, get_instance, f) for (n, f) in methods.items()}
+        scope = {n: (update_wrapper(partial(self._method, get_instance, f), f) if ismethod(f) else f) for (n, f) in methods.items()}
 
         properties = {n: x for (n, x) in getmembers(cls) if n[0] != '_' and isdatadescriptor(x)}
-        scope.update({n: partial(self._get_set, get_instance, p) for (n, p) in properties.items()})
+        scope.update({n: update_wrapper(partial(self._get_set, get_instance, p), p) for (n, p) in properties.items()})
         return scope
 
     @staticmethod
@@ -583,19 +538,31 @@ class CommandWindow(TextWindow):
         else:
             return descriptor.fget(get_instance())
 
+    @staticmethod
+    def help(x):
+        """Return the docstring of an object.
+
+        Args:
+            x: The object.
+
+        Returns:
+            x's docstring.
+        """
+        return x.__doc__
+
     def evaluate(self):
         """Evaluate the content of the command window as Python code.
         Shows the output on the command window itself.
         """
+        #try:
         try:
-            try:
-                result = eval(self._buffer.content, self._scope, globals())
-                self._buffer.content = '' if (result is None) else str(result)
-            except SyntaxError:
-                exec(self._buffer.content, self._scope, globals())
-                self._buffer.content = ''
-        except Exception as exception:
-            self._buffer.content = str(exception)
+            result = eval(self._buffer.content, self._scope, globals())
+            self._buffer.content = '' if (result is None) else str(result)
+        except SyntaxError:
+            exec(self._buffer.content, self._scope, globals())
+            self._buffer.content = ''
+        #except Exception as exception:
+        #    self._buffer.content = str(exception)
 
         self.cursor_end()
 
