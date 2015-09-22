@@ -3,8 +3,10 @@
 import re
 from attribute import Color, Property
 from key import Key
-from inspect import getmembers, isdatadescriptor, ismethod, isroutine
+from inspect import getmembers, isdatadescriptor, isfunction, isroutine
 from functools import partial, update_wrapper
+
+import inspect
 
 
 class Buffer:
@@ -43,6 +45,10 @@ class Buffer:
         Does not include newlines.
         """
         return self._lines
+
+    @property
+    def file_name(self):
+        return self._file_name
 
     def file_open(self, file_name):
         """Open a file in the buffer.
@@ -318,10 +324,6 @@ class TextWindow(Window):
         super().__init__(*args, **kwargs)
 
         self.key_bindings = {
-            Key('UP'):    self.cursor_up,
-            Key('DOWN'):  self.cursor_down,
-            Key('LEFT'):  self.cursor_back,
-            Key('RIGHT'): self.cursor_forward,
             Key('C-j'):   self.line_break,
             Key('M-i'):   self.cursor_up,
             Key('M-k'):   self.cursor_down,
@@ -464,6 +466,12 @@ class StatusWindow(Window):
         super().__init__(editor, editor._ui.max_lines-2, 0, 1, editor._ui.max_columns)
         self._ui_window.attributes_set(Color.Defaults, Property.Reversed)
 
+    def update(self):
+        line, column = self._editor.window_current.cursor
+        file_name = self._editor.window_current._buffer.file_name
+        self._buffer.content = '{:<15}{}'.format('({}, {})'.format(line+1, column), file_name)
+        self._update()
+
 
 class CommandWindow(TextWindow):
     """Class representing the command window for running commands, displaying results,
@@ -496,13 +504,18 @@ class CommandWindow(TextWindow):
         Returns:
             Dictionary containing the built scope.
         """
-        cls = type(get_instance())
+        obj = get_instance()
+        cls = type(obj)
 
         methods = {n: x for (n, x) in getmembers(cls) if n[0] != '_' and isroutine(x)}
-        scope = {n: (update_wrapper(partial(self._method, get_instance, f), f) if ismethod(f) else f) for (n, f) in methods.items()}
+        scope = {n: update_wrapper(partial(self._method, get_instance, f), f) for (n, f) in methods.items()}
+
+        functions = {n: x for (n, x) in getmembers(obj) if n[0] != '_' and isfunction(x)}
+        scope.update(functions)
 
         properties = {n: x for (n, x) in getmembers(cls) if n[0] != '_' and isdatadescriptor(x)}
         scope.update({n: update_wrapper(partial(self._get_set, get_instance, p), p) for (n, p) in properties.items()})
+
         return scope
 
     @staticmethod
@@ -597,6 +610,7 @@ class Editor:
     def _run(self):
         """Start the execution loop."""
         while True:
+            self._status_window.update()
             self._ui.refresh()
             self.key_handle(self._window_focused._ui_window.key_get())
 
