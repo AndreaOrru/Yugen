@@ -195,7 +195,7 @@ class Buffer:
         """Insert a character at the given position, moving the other characters accordingly.
 
         Args:
-            char: Charactere to insert.
+            char: Character to insert.
             line: Index of the line where to insert the character.
             column: Index of the line where to insert the character.
         """
@@ -352,6 +352,9 @@ class TextWindow(Window):
         for m in re.finditer(r"return", content):
             attributes[m.start(): m.end()] = [((Color.LightGreen, Color.Black), Property.Default)] * len(m.group())
 
+        for m in re.finditer(r"def\b", content):
+            attributes[m.start(): m.end()] = [((Color.LightRed, Color.Black), Property.Default)] * len(m.group())
+
         return content, attributes
 
     def _update(self):
@@ -488,7 +491,7 @@ class CommandWindow(TextWindow):
         self._scope = self._build_scope(lambda: self._editor.window_current.buffer)
         self._scope.update(self._build_scope(lambda: self._editor.window_current))
         self._scope.update(self._build_scope(lambda: self._editor))
-        self._scope.update(self._build_scope(lambda: self))
+        #self._scope.update(self._build_scope(lambda: self))
 
         self.key_bindings[Key('C-j')] = lambda: [self.evaluate(), self._editor.command_window_toggle()]
 
