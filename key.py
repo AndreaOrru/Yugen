@@ -14,6 +14,7 @@ class Key:
 
     keys = {k[4:]: eval('curses.'+k) for k in dir(curses) if k[:4] == 'KEY_'}
     keys['DEL'] = ascii.DEL
+    keys['TAB'] = ascii.TAB
 
     def __init__(self, key, ctrl=None, meta=None):
         """Initialize a Key object.

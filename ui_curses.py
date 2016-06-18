@@ -86,8 +86,12 @@ class CursesWindow(UIWindow):
 
         meta = (key1 == ascii.ESC)
         key = (key2 if meta else key1)
-        ctrl = isctrl(key)
-        key = ord(unctrl(key)[-1].lower()) if (key < 0x20) else key
+        # FIX: Ugly hack to make TAB work:
+        if (key == ascii.TAB):
+            ctrl = False
+        else:
+            ctrl = isctrl(key)
+            key = ord(unctrl(key)[-1].lower()) if (key < 0x20) else key
 
         return Key(key, ctrl, meta)
 
