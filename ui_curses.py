@@ -3,8 +3,9 @@
 import curses
 from curses import ascii
 from curses.ascii import isctrl, unctrl
-from key import Key
+
 from attribute import Color
+from key import Key
 from ui import UI, UIWindow
 
 

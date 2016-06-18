@@ -2,6 +2,7 @@
 """Yugen, the subtly profound text editor."""
 
 import curses
+
 from editor import Editor
 from ui_curses import Curses
 
