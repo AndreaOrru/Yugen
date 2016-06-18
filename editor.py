@@ -6,8 +6,6 @@ from key import Key
 from inspect import getmembers, isdatadescriptor, isfunction, isroutine
 from functools import partial, update_wrapper
 
-import inspect
-
 
 class Buffer:
     """Class representing a text buffer.
@@ -16,7 +14,7 @@ class Buffer:
     zero or more Window objects that display the text.
     If the buffer's content changes in any way, all the windows receive
     notifications about the change.
-    A Buffer can be associated to one file.
+    A Buffer can be associated with one file.
     """
     def __init__(self, content='', window=None):
         """Initialize a Buffer object.
@@ -324,16 +322,16 @@ class TextWindow(Window):
         super().__init__(*args, **kwargs)
 
         self.key_bindings = {
-            Key('C-j'):   self.line_break,
-            Key('M-i'):   self.cursor_up,
-            Key('M-k'):   self.cursor_down,
-            Key('M-j'):   self.cursor_back,
-            Key('M-l'):   self.cursor_forward,
-            Key('DEL'):   self.char_delete_before,
-            Key('DC'):    self.char_delete,
-            Key('C-d'):   self.char_delete,
-            Key('M-b'):   self.cursor_begin,
-            Key('M-e'):   self.cursor_end,
+            Key('C-j'): self.line_break,
+            Key('M-i'): self.cursor_up,
+            Key('M-k'): self.cursor_down,
+            Key('M-j'): self.cursor_back,
+            Key('M-l'): self.cursor_forward,
+            Key('DEL'): self.char_delete_before,
+            Key('DC'):  self.char_delete,
+            Key('C-d'): self.char_delete,
+            Key('M-b'): self.cursor_begin,
+            Key('M-e'): self.cursor_end,
         }
 
     def _format(self, line):
@@ -491,7 +489,7 @@ class CommandWindow(TextWindow):
         self._scope = self._build_scope(lambda: self._editor.window_current.buffer)
         self._scope.update(self._build_scope(lambda: self._editor.window_current))
         self._scope.update(self._build_scope(lambda: self._editor))
-        #self._scope.update(self._build_scope(lambda: self))
+        # self._scope.update(self._build_scope(lambda: self))
 
         self.key_bindings[Key('C-j')] = lambda: [self.evaluate(), self._editor.command_window_toggle()]
 
@@ -570,15 +568,15 @@ class CommandWindow(TextWindow):
         """Evaluate the content of the command window as Python code.
         Shows the output on the command window itself.
         """
-        #try:
+        # try:
         try:
             result = eval(self._buffer.content, self._scope, globals())
             self._buffer.content = '' if (result is None) else str(result)
         except SyntaxError:
             exec(self._buffer.content, self._scope, globals())
             self._buffer.content = ''
-        #except Exception as exception:
-        #    self._buffer.content = str(exception)
+        # except Exception as exception:
+        #     self._buffer.content = str(exception)
 
         self.cursor_end()
 
